@@ -8,7 +8,6 @@ import (
 	"github.com/BurntSushi/xgbutil/keybind"
 	"github.com/BurntSushi/xgbutil/mousebind"
 	"github.com/BurntSushi/xgbutil/xevent"
-	"github.com/kward/go-vnc/buttons"
 	"github.com/kward/go-vnc/keys"
 )
 
@@ -17,21 +16,20 @@ type X11Input struct {
 	xu      *xgbutil.XUtil
 	remote  Remote
 	pointer *Pointer
-	// keyMapping interface{}
+	config  *Config
 }
 
-func NewX11Input(log Logger, scrollSpeed uint8, remote Remote) (*X11Input, error) {
+func NewX11Input(log Logger, remote Remote, config *Config) (*X11Input, error) {
 	// create X connection
 	xu, err := xgbutil.NewConn()
 	if err != nil {
 		return nil, fmt.Errorf("Could not connect to X: %s", err)
 	}
-
 	// set the pointer to the middle of remote screen
 	pointer := newPointer(xu.Screen().WidthInPixels, xu.Screen().HeightInPixels,
-		remote.ScreenW(), remote.ScreenH(), scrollSpeed)
+		remote.ScreenW(), remote.ScreenH())
 
-	return &X11Input{log, xu, remote, pointer}, nil
+	return &X11Input{log, xu, remote, pointer, config}, nil
 }
 
 func (i X11Input) Grab() error {
@@ -48,8 +46,8 @@ func (i X11Input) Grab() error {
 		return fmt.Errorf("Could not grab pointer: %s", err)
 	}
 
-	// set the pointer and location to middle of local and remote screen
-	i.remote.SendPointerEvent(uint8(buttons.None), i.pointer.X, i.pointer.Y)
+	// set the pointer location to the middle of remote screen
+	i.remote.SendPointerEvent("Center", 0, i.pointer.X, i.pointer.Y)
 
 	// connect event handlers
 	xevent.KeyPressFun(i.handleKeyPress).Connect(i.xu, w)
@@ -70,42 +68,30 @@ func (i X11Input) warpPointerToScreenMid() {
 }
 
 func (i X11Input) handleKeyPress(xu *xgbutil.XUtil, e xevent.KeyPressEvent) {
-	i.checkForSwitchKey(e)
-	// modStr := keybind.ModifierString(e.State)
-	// keyStr := keybind.LookupString(X, e.State, e.Detail)
-	key := uint32(keybind.KeysymGet(xu, e.Detail, 0))
-	i.remote.SendKeyEvent(key, true)
+	if i.isHotkey(e) {
+		return
+	}
+	key := uint32(keybind.KeysymGet(i.xu, e.Detail, 0))
+	i.handleKeyEvent(key, true)
 }
 
 func (i X11Input) handleKeyRelease(xu *xgbutil.XUtil, e xevent.KeyReleaseEvent) {
-	key := uint32(keybind.KeysymGet(xu, e.Detail, 0))
-	i.remote.SendKeyEvent(key, false)
+	key := uint32(keybind.KeysymGet(i.xu, e.Detail, 0))
+	i.handleKeyEvent(key, false)
 }
 
 func (i X11Input) handleButtonPress(xu *xgbutil.XUtil, e xevent.ButtonPressEvent) {
-	if e.Detail == 4 || e.Detail == 5 {
-		// handle scroll button press and speed
-		for j := 0; j < int(i.pointer.ScrollSpeed); j++ {
-			i.remote.SendPointerEvent(xButtonAdapter(e.Detail),
-				i.pointer.EventX(e.EventX), i.pointer.EventY(e.EventY))
-		}
-		return
-	}
-
-	i.pointer.Btn = xButtonAdapter(e.Detail)
-	i.remote.SendPointerEvent(i.pointer.Btn, i.pointer.EventX(e.EventX), i.pointer.EventY(e.EventY))
+	i.handlePointerEvent(uint8(e.Detail), true, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleButtonRelease(xu *xgbutil.XUtil, e xevent.ButtonReleaseEvent) {
-	i.pointer.Btn = uint8(buttons.None)
-	i.remote.SendPointerEvent(i.pointer.Btn, i.pointer.EventX(e.EventX), i.pointer.EventY(e.EventY))
+	i.handlePointerEvent(0, false, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEvent) {
 	// limit number of motion events,
 	// large number can make handler lag
 	e = compressMotionNotify(xu, e)
-
 	// activate warp only if there are changes to prevX or prevY
 	// avoids the endless motionNotifyEvent loop
 	if e.EventX != int16(i.pointer.PrevX) || e.EventY != int16(i.pointer.PrevY) {
@@ -113,23 +99,28 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 		// keeps the cursor in the local screen center.
 		// needed for hitting the end on local screens while using a larger remote screen
 	}
-	i.pointer.PrevX = uint16(e.EventX)
-	i.pointer.PrevY = uint16(e.EventY)
-
-	i.remote.SendPointerEvent(i.pointer.Btn, i.pointer.EventX(e.EventX), i.pointer.EventY(e.EventY))
+	i.pointer.setPrev(uint16(e.EventX), uint16(e.EventY))
+	i.handlePointerEvent(i.pointer.Btn, true, e.EventX, e.EventY)
 }
 
-func (i X11Input) checkForSwitchKey(e xevent.KeyPressEvent) {
-	//todo make exit hotkey customizable
-	if keybind.KeyMatch(i.xu, "Escape", e.State, e.Detail) {
-		if e.State&xproto.ModMaskControl > 0 {
-			i.log.Printf("Exit hotkey detected. Quitting...")
-			xevent.Quit(i.xu)
-			// keybind.Detach(i.xu, i.xu.RootWin())
-			// mousebind.Detach(i.xu, i.xu.RootWin())
-			// xevent.Detach(i.xu, i.xu.RootWin())
+func (i X11Input) sendScrollButtonEvent(e *Event, isPress bool) bool {
+	// handle scroll button speed
+	if isPress && (e.Button == 4 || e.Button == 5) {
+		for j := 0; j < int(i.config.ScrollSpeed); j++ {
+			i.remote.SendPointerEvent(e.Name, i.pointer.Btn, i.pointer.X, i.pointer.Y)
 		}
+		return true
 	}
+	return false
+}
+
+func (i X11Input) isHotkey(e xevent.KeyPressEvent) bool {
+	if keybind.KeyMatch(i.xu, i.config.Hotkey, e.State, e.Detail) {
+		i.log.Printf("Exit hotkey detected. Quitting...")
+		xevent.Quit(i.xu)
+		return true
+	}
+	return false
 }
 
 func isCapsLocked(key keys.Key, lockedKeys map[keys.Key]bool) bool {
@@ -198,4 +189,53 @@ func compressMotionNotify(xu *xgbutil.XUtil, ev xevent.MotionNotifyEvent) xevent
 	xu.TimeSet(lastE.Time)
 
 	return lastE
+}
+
+func resolveMapping(mapping map[string]string, e *Event) *Event {
+	for from, to := range mapping {
+		fromE, _ := findEvent(from)
+
+		if fromE.Name == e.Name {
+			toE, _ := findEvent(to)
+			return toE
+		}
+	}
+	return e
+}
+
+func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
+	event, err := newKeyEvent(key)
+	if err != nil {
+		i.log.Errorf("%s", err)
+		return
+	}
+	i.sendEvent(event, isPress)
+}
+
+func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
+	event, err := newButtonEvent(button)
+	if err != nil {
+		i.log.Errorf("%s", err)
+		return
+	}
+	// i.pointer.Btn = event.Button
+	i.pointer.set(uint16(x), uint16(y))
+	i.sendEvent(event, isPress)
+}
+
+func (i X11Input) sendEvent(e *Event, isPress bool) {
+	debugEvent(i.log, "Recieved", e.IsKey, e.Name, i.pointer.X, i.pointer.Y, isPress)
+	ne := resolveMapping(i.config.Keymap, e)
+
+	if ne.IsKey {
+		i.remote.SendKeyEvent(ne.Name, ne.Key, isPress)
+	} else {
+		i.pointer.Btn = 0
+		if isPress {
+			i.pointer.Btn = ne.Button
+		}
+		if !i.sendScrollButtonEvent(ne, isPress) {
+			i.remote.SendPointerEvent(ne.Name, i.pointer.Btn, i.pointer.X, i.pointer.Y)
+		}
+	}
 }
