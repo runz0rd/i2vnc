@@ -1,0 +1,12 @@
+config:
+  mac:
+    server: 192.168.0.15
+    port: 5900
+    hotkey: F9
+    scrollSpeed: 5
+    settleMs: 0
+    keymap:
+      Alt_L: Meta_L
+      Super_L: Control_L
+      Control_L: Super_L
+      # Button_8: Meta_L

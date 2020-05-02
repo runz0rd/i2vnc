@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"time"
 
 	"github.com/runz0rd/i2vnc"
 	"github.com/sirupsen/logrus"
@@ -10,27 +9,30 @@ import (
 
 func main() {
 	var (
-		scrollSpeed = flag.Int("n", 1, "n int")
-		server      = flag.String("s", "localhost", "s string")
-		port        = flag.String("p", "5900", "p string")
-		pw          = flag.String("pw", "", "pw string")
-		settle      = flag.Int("stl", 1, "stl int in ms")
-		//todo debug flag
-		//todo multivalue flag for remapping keys
+		pw    = flag.String("p", "", "vnc server password string")
+		debug = flag.Bool("d", false, "debug mode bool")
+		cfile = flag.String("cfile", "~/.config/i2vnc.yaml", "path to the config file string")
+		cname = flag.String("cname", "default", "name of the config to use string")
 	)
 	flag.Parse()
 	log := logrus.New()
-	settleMS := time.Duration(*settle) * time.Millisecond
-	remote, err := i2vnc.NewVncRemote(log, *server, *port, *pw, settleMS)
+	if *debug {
+		log.SetLevel(logrus.DebugLevel)
+	}
+	config, err := i2vnc.NewConfig(*cfile, *cname)
+	if err != nil {
+		log.WithError(err).Fatalf("Failed loading configuration %v from %v.", *cname, *cfile)
+	}
+
+	remote, err := i2vnc.NewVncRemote(log, config, *pw)
 	if err != nil {
 		log.WithError(err).Fatalf("Failed connecting to remote.")
 	}
-	input, err := i2vnc.NewInput(i2vnc.X11, log, uint8(*scrollSpeed), remote)
+	input, err := i2vnc.NewInput(log, i2vnc.X11, remote, config)
 	if err != nil {
 		log.WithError(err).Fatalf("Failed initializing input.")
 	}
 	if err := input.Grab(); err != nil {
 		log.WithError(err).Fatalf("Failed grabbing input.")
 	}
-	//todo support for remapping keys
 }
