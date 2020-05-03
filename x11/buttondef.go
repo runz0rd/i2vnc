@@ -1,4 +1,4 @@
-package i2vnc
+package x11
 
 var Buttons map[string]uint8 = map[string]uint8{
 	"Button_None":   0,

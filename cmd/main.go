@@ -4,6 +4,7 @@ import (
 	"flag"
 
 	"github.com/runz0rd/i2vnc"
+	"github.com/runz0rd/i2vnc/x11"
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,7 +29,7 @@ func main() {
 	if err != nil {
 		log.WithError(err).Fatalf("Failed connecting to remote.")
 	}
-	input, err := i2vnc.NewInput(log, i2vnc.X11, remote, config)
+	input, err := x11.NewInput(log, remote, config)
 	if err != nil {
 		log.WithError(err).Fatalf("Failed initializing input.")
 	}

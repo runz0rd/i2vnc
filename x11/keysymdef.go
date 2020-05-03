@@ -1,4 +1,4 @@
-package i2vnc
+package x11
 
 var Keysyms map[string]uint32 = map[string]uint32{
 	"VoidSymbol":                  0xffffff,

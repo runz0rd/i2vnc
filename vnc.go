@@ -50,7 +50,7 @@ func (r VncRemote) SendKeyEvent(name string, key uint32, isPress bool) error {
 		r.log.Errorf("Failed to send key event: %v", err)
 		return fmt.Errorf("Failed to send key event: %v", err)
 	}
-	debugEvent(r.log, "Sent", true, name, 0, 0, isPress)
+	DebugEvent(r.log, "Sent", true, name, 0, 0, isPress)
 	return nil
 }
 
@@ -59,7 +59,7 @@ func (r VncRemote) SendPointerEvent(name string, button uint8, x, y uint16) erro
 		r.log.Errorf("Failed to send pointer event: %v", err)
 		return fmt.Errorf("Failed to send pointer event: %v", err)
 	}
-	debugEvent(r.log, "Sent", false, name, x, y, false)
+	DebugEvent(r.log, "Sent", false, name, x, y, false)
 	return nil
 }
 

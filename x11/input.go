@@ -1,4 +1,4 @@
-package i2vnc
+package x11
 
 import (
 	"fmt"
@@ -9,17 +9,21 @@ import (
 	"github.com/BurntSushi/xgbutil/mousebind"
 	"github.com/BurntSushi/xgbutil/xevent"
 	"github.com/kward/go-vnc/keys"
+	"github.com/runz0rd/i2vnc"
 )
 
 type X11Input struct {
-	log     Logger
+	log     i2vnc.Logger
 	xu      *xgbutil.XUtil
-	remote  Remote
+	remote  i2vnc.Remote
 	pointer *Pointer
-	config  *Config
+	config  *i2vnc.Config
 }
 
-func NewX11Input(log Logger, remote Remote, config *Config) (*X11Input, error) {
+func NewInput(log i2vnc.Logger, remote i2vnc.Remote, config *i2vnc.Config) (*X11Input, error) {
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
 	// create X connection
 	xu, err := xgbutil.NewConn()
 	if err != nil {
@@ -103,7 +107,7 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 	i.handlePointerEvent(i.pointer.Btn, true, e.EventX, e.EventY)
 }
 
-func (i X11Input) sendScrollButtonEvent(e *Event, isPress bool) bool {
+func (i X11Input) sendScrollButtonEvent(e *i2vnc.Event, isPress bool) bool {
 	// handle scroll button speed
 	if isPress && (e.Button == 4 || e.Button == 5) {
 		for j := 0; j < int(i.config.ScrollSpeed); j++ {
@@ -191,7 +195,7 @@ func compressMotionNotify(xu *xgbutil.XUtil, ev xevent.MotionNotifyEvent) xevent
 	return lastE
 }
 
-func resolveMapping(mapping map[string]string, e *Event) *Event {
+func resolveMapping(mapping map[string]string, e *i2vnc.Event) *i2vnc.Event {
 	for from, to := range mapping {
 		fromE, _ := findEvent(from)
 
@@ -218,13 +222,12 @@ func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
 		i.log.Errorf("%s", err)
 		return
 	}
-	// i.pointer.Btn = event.Button
 	i.pointer.set(uint16(x), uint16(y))
 	i.sendEvent(event, isPress)
 }
 
-func (i X11Input) sendEvent(e *Event, isPress bool) {
-	debugEvent(i.log, "Recieved", e.IsKey, e.Name, i.pointer.X, i.pointer.Y, isPress)
+func (i X11Input) sendEvent(e *i2vnc.Event, isPress bool) {
+	i2vnc.DebugEvent(i.log, "Recieved", e.IsKey, e.Name, i.pointer.X, i.pointer.Y, isPress)
 	ne := resolveMapping(i.config.Keymap, e)
 
 	if ne.IsKey {
