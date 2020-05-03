@@ -64,11 +64,61 @@ func NewConfig(path, name string) (*Config, error) {
 	return &config, nil
 }
 
-type Event struct {
+type Screen struct {
+	X uint16
+	Y uint16
+}
+
+type EventDefintion struct {
 	Name   string
 	Key    uint32
 	Button uint8
 	IsKey  bool
+}
+
+type Event struct {
+	Def        EventDefintion
+	Coords     Screen
+	PrevCoords Screen
+	localMax   Screen
+	remoteMax  Screen
+	IsPress    bool
+	IsLocked   bool
+}
+
+func NewEvent(localMax Screen, remoteMax Screen) *Event {
+	return &Event{
+		localMax:  localMax,
+		remoteMax: remoteMax,
+	}
+}
+func (e *Event) SetToScreenMid(screenMaxW, screenMaxH uint16) {
+	e.Coords.X = screenMaxW / 2
+	e.Coords.Y = screenMaxH / 2
+}
+
+func (e *Event) SetCoords(x, y uint16) {
+	e.Coords.X = e.calcOffset(e.Coords.X, x, e.localMax.X, e.remoteMax.X)
+	e.Coords.Y = e.calcOffset(e.Coords.Y, y, e.localMax.Y, e.remoteMax.Y)
+}
+
+func (e *Event) SetPrevCoords(x, y uint16) {
+	e.PrevCoords.X = x
+	e.PrevCoords.Y = y
+}
+
+func (e *Event) calcOffset(value, offset, localMax, remoteMax uint16) uint16 {
+	value += offset - localMax/2
+	if value < 1 || value > 65535/2 {
+		// when going under 0, the value starts going down from max uint16
+		// if it is in the upper half of max uint16, reset to 0
+		value = 0
+	}
+	if value >= remoteMax && value <= 65535/2 {
+		// if it is in the lower half of max uint16, reset to max
+		value = remoteMax
+	}
+	return value
 }
 
 func DebugEvent(log Logger, state string, isKey bool, name string, x, y uint16, isPress bool) {

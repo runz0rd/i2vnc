@@ -8,20 +8,20 @@ import (
 	"github.com/BurntSushi/xgbutil/keybind"
 	"github.com/BurntSushi/xgbutil/mousebind"
 	"github.com/BurntSushi/xgbutil/xevent"
-	"github.com/kward/go-vnc/keys"
 	"github.com/runz0rd/i2vnc"
 )
 
 type X11Input struct {
-	log     i2vnc.Logger
-	xu      *xgbutil.XUtil
-	remote  i2vnc.Remote
-	pointer *Pointer
-	config  *i2vnc.Config
+	log i2vnc.Logger
+	xu  *xgbutil.XUtil
+	r   i2vnc.Remote
+	e   *i2vnc.Event
+	c   *i2vnc.Config
 }
 
-func NewInput(log i2vnc.Logger, remote i2vnc.Remote, config *i2vnc.Config) (*X11Input, error) {
-	if err := validateConfig(config); err != nil {
+func NewInput(log i2vnc.Logger, r i2vnc.Remote, c *i2vnc.Config) (*X11Input, error) {
+	// validate config
+	if err := validateConfig(c); err != nil {
 		return nil, err
 	}
 	// create X connection
@@ -29,11 +29,12 @@ func NewInput(log i2vnc.Logger, remote i2vnc.Remote, config *i2vnc.Config) (*X11
 	if err != nil {
 		return nil, fmt.Errorf("Could not connect to X: %s", err)
 	}
-	// set the pointer to the middle of remote screen
-	pointer := newPointer(xu.Screen().WidthInPixels, xu.Screen().HeightInPixels,
-		remote.ScreenW(), remote.ScreenH())
+	// create a new event
+	e := i2vnc.NewEvent(
+		i2vnc.Screen{xu.Screen().WidthInPixels, xu.Screen().HeightInPixels},
+		i2vnc.Screen{r.ScreenW(), r.ScreenH()})
 
-	return &X11Input{log, xu, remote, pointer, config}, nil
+	return &X11Input{log, xu, r, e, c}, nil
 }
 
 func (i X11Input) Grab() error {
@@ -46,12 +47,17 @@ func (i X11Input) Grab() error {
 		return fmt.Errorf("Could not grab keyboard: %s", err)
 	}
 	mousebind.Initialize(i.xu)
-	if grabbed, err := mousebind.GrabPointer(i.xu, w, xproto.WindowNone, xproto.CursorNone); !grabbed {
+	if grabbed, err := mousebind.GrabPointer(i.xu, w, xproto.WindowNone,
+		xproto.CursorNone); !grabbed {
 		return fmt.Errorf("Could not grab pointer: %s", err)
 	}
 
-	// set the pointer location to the middle of remote screen
-	i.remote.SendPointerEvent("Center", 0, i.pointer.X, i.pointer.Y)
+	// set coords to middle of remote screen
+	i.e.SetToScreenMid(i.r.ScreenW(), i.r.ScreenH())
+	// set the local pointer to the middle of local screen
+	i.warpPointerToScreenMid()
+	// set the remote pointer to the middle of remote screen
+	i.r.SendPointerEvent("Button_None", 0, i.e.Coords.X, i.e.Coords.Y)
 
 	// connect event handlers
 	xevent.KeyPressFun(i.handleKeyPress).Connect(i.xu, w)
@@ -67,14 +73,15 @@ func (i X11Input) Grab() error {
 }
 
 func (i X11Input) warpPointerToScreenMid() {
-	xproto.WarpPointer(i.xu.Conn(), xproto.WindowNone,
-		i.xu.RootWin(), 0, 0, 0, 0, int16(i.pointer.midW), int16(i.pointer.midH))
+	xproto.WarpPointer(i.xu.Conn(), xproto.WindowNone, i.xu.RootWin(), 0, 0, 0, 0,
+		int16(i.xu.Screen().WidthInPixels/2), int16(i.xu.Screen().HeightInPixels/2))
 }
 
 func (i X11Input) handleKeyPress(xu *xgbutil.XUtil, e xevent.KeyPressEvent) {
 	if i.isHotkey(e) {
 		return
 	}
+
 	key := uint32(keybind.KeysymGet(i.xu, e.Detail, 0))
 	i.handleKeyEvent(key, true)
 }
@@ -98,28 +105,40 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 	e = compressMotionNotify(xu, e)
 	// activate warp only if there are changes to prevX or prevY
 	// avoids the endless motionNotifyEvent loop
-	if e.EventX != int16(i.pointer.PrevX) || e.EventY != int16(i.pointer.PrevY) {
+	if e.EventX != int16(i.e.PrevCoords.X) || e.EventY != int16(i.e.PrevCoords.Y) {
 		i.warpPointerToScreenMid()
 		// keeps the cursor in the local screen center.
 		// needed for hitting the end on local screens while using a larger remote screen
 	}
-	i.pointer.setPrev(uint16(e.EventX), uint16(e.EventY))
-	i.handlePointerEvent(i.pointer.Btn, true, e.EventX, e.EventY)
+	i.handlePointerEvent(i.e.Def.Button, true, e.EventX, e.EventY)
 }
 
-func (i X11Input) sendScrollButtonEvent(e *i2vnc.Event, isPress bool) bool {
-	// handle scroll button speed
-	if isPress && (e.Button == 4 || e.Button == 5) {
-		for j := 0; j < int(i.config.ScrollSpeed); j++ {
-			i.remote.SendPointerEvent(e.Name, i.pointer.Btn, i.pointer.X, i.pointer.Y)
-		}
-		return true
+func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
+	ked, err := newKeyEventDef(key)
+	if err != nil {
+		i.log.Errorf("%s", err)
+		return
 	}
-	return false
+	i.e.Def = *ked
+	i.e.IsPress = isPress
+	i.sendEvent()
+}
+
+func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
+	bed, err := newButtonEventDef(button)
+	if err != nil {
+		i.log.Errorf("%s", err)
+		return
+	}
+	i.e.Def = *bed
+	i.e.IsPress = isPress
+	i.e.SetPrevCoords(uint16(x), uint16(y))
+	i.e.SetCoords(uint16(x), uint16(y))
+	i.sendEvent()
 }
 
 func (i X11Input) isHotkey(e xevent.KeyPressEvent) bool {
-	if keybind.KeyMatch(i.xu, i.config.Hotkey, e.State, e.Detail) {
+	if keybind.KeyMatch(i.xu, i.c.Hotkey, e.State, e.Detail) {
 		i.log.Printf("Exit hotkey detected. Quitting...")
 		xevent.Quit(i.xu)
 		return true
@@ -127,118 +146,51 @@ func (i X11Input) isHotkey(e xevent.KeyPressEvent) bool {
 	return false
 }
 
-func isCapsLocked(key keys.Key, lockedKeys map[keys.Key]bool) bool {
-	//todo handle key events with capslock
+func (i X11Input) handleScrollButtonEvent() bool {
+	// handle scroll button speed
+	if i.e.IsPress && (i.e.Def.Button == 4 || i.e.Def.Button == 5) {
+		for j := 0; j < int(i.c.ScrollSpeed); j++ {
+			i.r.SendPointerEvent(i.e.Def.Name, i.e.Def.Button,
+				i.e.Coords.X, i.e.Coords.Y)
+		}
+		return true
+	}
 	return false
 }
 
-// compressMotionNotify takes a MotionNotify event, and inspects the event
-// queue for any future MotionNotify events that can be received without
-// blocking. The most recent MotionNotify event is then returned.
-// We need to make sure that the Event, Child, Detail, State, Root
-// and SameScreen fields are the same to ensure the same window/action is
-// generating events. That is, we are only compressing the RootX, RootY,
-// EventX and EventY fields.
-// This function is not thread safe, since Peek returns a *copy* of the
-// event queue---which could be out of date by the time we dequeue events.
-func compressMotionNotify(xu *xgbutil.XUtil, ev xevent.MotionNotifyEvent) xevent.MotionNotifyEvent {
-
-	// We force a round trip request so that we make sure to read all
-	// available events.
-	xu.Sync()
-	xevent.Read(xu, false)
-
-	// The most recent MotionNotify event that we'll end up returning.
-	lastE := ev
-
-	// Look through each event in the queue. If it's an event and it matches
-	// all the fields in 'ev' that are detailed above, then set it to 'laste'.
-	// In which case, we'll also dequeue the event, otherwise it will be
-	// processed twice!
-	// N.B. If our only goal was to find the most recent relevant MotionNotify
-	// event, we could traverse the event queue backwards and simply use
-	// the first MotionNotify we see. However, this could potentially leave
-	// other MotionNotify events in the queue, which we *don't* want to be
-	// processed. So we stride along and just pick off MotionNotify events
-	// until we don't see any more.
-	for i, ee := range xevent.Peek(xu) {
-		if ee.Err != nil { // This is an error, skip it.
-			continue
+func (i X11Input) handleCapsLockEvent() bool {
+	if i.e.Def.Key == Keysyms["Caps_Lock"] {
+		if i.e.IsPress && !i.e.IsLocked {
+			i.e.IsLocked = true
+			return false
 		}
-
-		// Use type assertion to make sure this is a MotionNotify event.
-		if mn, ok := ee.Event.(xproto.MotionNotifyEvent); ok {
-			// Now make sure all appropriate fields are equivalent.
-			if ev.Event == mn.Event && ev.Child == mn.Child &&
-				ev.Detail == mn.Detail && ev.State == mn.State &&
-				ev.Root == mn.Root && ev.SameScreen == mn.SameScreen {
-
-				// Set the most recent/valid motion notify event.
-				lastE = xevent.MotionNotifyEvent{&mn}
-
-				// We cheat and use the stack semantics of defer to dequeue
-				// most recent motion notify events first, so that the indices
-				// don't become invalid. (If we dequeued oldest first, we'd
-				// have to account for all future events shifting to the left
-				// by one.)
-				defer func(i int) { xevent.DequeueAt(xu, i) }(i)
-			}
+		if i.e.IsPress && i.e.IsLocked {
+			i.e.IsLocked = false
+			return false
+		}
+		if !i.e.IsPress && i.e.IsLocked {
+			return true
 		}
 	}
-
-	// This isn't strictly necessary, but is correct. We should update
-	// xgbutil's sense of time with the most recent event processed.
-	// This is typically done in the main event loop, but since we are
-	// subverting the main event loop, we should take care of it.
-	xu.TimeSet(lastE.Time)
-
-	return lastE
+	return false
 }
 
-func resolveMapping(mapping map[string]string, e *i2vnc.Event) *i2vnc.Event {
-	for from, to := range mapping {
-		fromE, _ := findEvent(from)
+func (i X11Input) sendEvent() {
+	i2vnc.DebugEvent(i.log, "Recieved", i.e.Def.IsKey, i.e.Def.Name,
+		i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
+	resolveMapping(i.c.Keymap, i.e)
 
-		if fromE.Name == e.Name {
-			toE, _ := findEvent(to)
-			return toE
+	if i.e.Def.IsKey {
+		capsHandled := i.handleCapsLockEvent()
+		if !capsHandled {
+			i.r.SendKeyEvent(i.e.Def.Name, i.e.Def.Key, i.e.IsPress)
 		}
-	}
-	return e
-}
-
-func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
-	event, err := newKeyEvent(key)
-	if err != nil {
-		i.log.Errorf("%s", err)
-		return
-	}
-	i.sendEvent(event, isPress)
-}
-
-func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
-	event, err := newButtonEvent(button)
-	if err != nil {
-		i.log.Errorf("%s", err)
-		return
-	}
-	i.pointer.set(uint16(x), uint16(y))
-	i.sendEvent(event, isPress)
-}
-
-func (i X11Input) sendEvent(e *i2vnc.Event, isPress bool) {
-	i2vnc.DebugEvent(i.log, "Recieved", e.IsKey, e.Name, i.pointer.X, i.pointer.Y, isPress)
-	ne := resolveMapping(i.config.Keymap, e)
-
-	if ne.IsKey {
-		i.remote.SendKeyEvent(ne.Name, ne.Key, isPress)
 	} else {
-		i.pointer.Btn = 0
-		if isPress {
-			i.pointer.Btn = ne.Button
-		}
-		if !i.sendScrollButtonEvent(ne, isPress) {
-			i.remote.SendPointerEvent(ne.Name, i.pointer.Btn, i.pointer.X, i.pointer.Y)
+		//todo implement mouse speed
+		scrollHandled := i.handleScrollButtonEvent()
+		if !scrollHandled {
+			i.r.SendPointerEvent(i.e.Def.Name, i.e.Def.Button,
+				i.e.Coords.X, i.e.Coords.Y)
 		}
 	}
 }
