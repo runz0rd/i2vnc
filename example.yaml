@@ -9,4 +9,8 @@ config:
       Alt_L: Meta_L
       Super_L: Control_L
       Control_L: Super_L
-      # Button_8: Meta_L
+      Shift_L+apostrophe: quotedbl
+      Shift_R+0: braceright
+      Shift_R+minus: underscore
+      Shift_R+equal: plus
+      Shift_R+grave: asciitilde

@@ -2,6 +2,8 @@ package x11
 
 import (
 	"fmt"
+	"reflect"
+	"strings"
 
 	"github.com/BurntSushi/xgb/xproto"
 	"github.com/BurntSushi/xgbutil"
@@ -133,16 +135,16 @@ func (p *Pointer) setY(event uint16) uint16 {
 }
 
 func validateConfig(c *i2vnc.Config) error {
-	_, err := findEventDef(c.Hotkey)
+	_, _, err := getConfigDefs(c.Hotkey)
 	if err != nil {
 		return err
 	}
 	for from, to := range c.Keymap {
-		_, err = findEventDef(from)
+		_, _, err = getConfigDefs(from)
 		if err != nil {
 			return err
 		}
-		_, err = findEventDef(to)
+		_, _, err = getConfigDefs(to)
 		if err != nil {
 			return err
 		}
@@ -199,15 +201,27 @@ func newButtonEventDef(button uint8) (*i2vnc.EventDefintion, error) {
 	return &e, nil
 }
 
-func resolveMapping(mapping map[string]string, e *i2vnc.Event) *i2vnc.Event {
-	for from, to := range mapping {
-		fromEd, _ := findEventDef(from)
+func getConfigDefs(value string) (*i2vnc.EventDefintion, *[]i2vnc.EventDefintion, error) {
+	e := i2vnc.Event{}
+	names := strings.Split(value, "+")
+	for _, name := range names {
+		def, err := findEventDef(name)
+		if err != nil {
+			return nil, nil, err
+		}
+		e.HandleEvent(*def, true)
+	}
+	return &e.Def, &e.Mods, nil
+}
 
-		if *fromEd == e.Def {
-			toEd, _ := findEventDef(to)
-			e.Def = *toEd
-			return e
+func resolveMapping(mapping map[string]string, e i2vnc.Event) *i2vnc.Event {
+	for from, to := range mapping {
+		fromDef, fromMods, _ := getConfigDefs(from)
+		if *fromDef == e.Def && reflect.DeepEqual(*fromMods, e.Mods) {
+			toDef, toMods, _ := getConfigDefs(to)
+			e.Def = *toDef
+			e.Mods = *toMods
 		}
 	}
-	return e
+	return &e
 }

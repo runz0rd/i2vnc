@@ -24,7 +24,6 @@ func main() {
 	if err != nil {
 		log.WithError(err).Fatalf("Failed loading configuration %v from %v.", *cname, *cfile)
 	}
-
 	remote, err := i2vnc.NewVncRemote(log, config, *pw)
 	if err != nil {
 		log.WithError(err).Fatalf("Failed connecting to remote.")

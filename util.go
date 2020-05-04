@@ -76,6 +76,10 @@ type EventDefintion struct {
 	IsKey  bool
 }
 
+var modNames = [...]string{
+	"Control_L", "Control_R", "Alt_L", "Alt_R", "Super_L",
+	"Super_R", "Shift_L", "Shift_R", "Meta_L", "Meta_R"}
+
 type Event struct {
 	Def        EventDefintion
 	Coords     Screen
@@ -84,22 +88,60 @@ type Event struct {
 	remoteMax  Screen
 	IsPress    bool
 	IsLocked   bool
+	Mods       []EventDefintion
 }
 
-func NewEvent(localMax Screen, remoteMax Screen) *Event {
+func NewEvent(localW, localH uint16) *Event {
 	return &Event{
-		localMax:  localMax,
-		remoteMax: remoteMax,
+		localMax: Screen{localW, localH},
 	}
 }
+
+func (e *Event) Definition() EventDefintion {
+	//todo no good, rething
+	if e.Def.Name != "" {
+		return e.Def
+	}
+	return e.Mods[0]
+}
+
+func (e *Event) HandleEvent(def EventDefintion, isPress bool) {
+	e.Def = EventDefintion{IsKey: true}
+	if !e.handleMod(def, isPress) {
+		e.Def = def
+		e.IsPress = isPress
+	}
+}
+
+func (e *Event) handleMod(def EventDefintion, isPress bool) bool {
+	for _, availableMod := range modNames {
+		if def.Name == availableMod {
+			for i := 0; i < len(e.Mods); i++ {
+				if def.Name == e.Mods[i].Name && !isPress {
+					// e.Mods[i] = e.Mods[len(e.Mods)-1]
+					// e.Mods = e.Mods[:len(e.Mods)-1]
+					e.Mods = append(e.Mods[:i], e.Mods[i+1:]...)
+					// all this to remove an item
+					return true
+				}
+			}
+			if isPress {
+				e.Mods = append(e.Mods, def)
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (e *Event) SetToScreenMid(screenMaxW, screenMaxH uint16) {
 	e.Coords.X = screenMaxW / 2
 	e.Coords.Y = screenMaxH / 2
 }
 
-func (e *Event) SetCoords(x, y uint16) {
-	e.Coords.X = e.calcOffset(e.Coords.X, x, e.localMax.X, e.remoteMax.X)
-	e.Coords.Y = e.calcOffset(e.Coords.Y, y, e.localMax.Y, e.remoteMax.Y)
+func (e *Event) SetCoords(x, y, remoteW, remoteH uint16) {
+	e.Coords.X = e.calcOffset(e.Coords.X, x, e.localMax.X, remoteW)
+	e.Coords.Y = e.calcOffset(e.Coords.Y, y, e.localMax.Y, remoteH)
 }
 
 func (e *Event) SetPrevCoords(x, y uint16) {
