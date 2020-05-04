@@ -344,7 +344,6 @@ var Keysyms map[string]uint32 = map[string]uint32{
 	"percent":                     0x0025,
 	"ampersand":                   0x0026,
 	"apostrophe":                  0x0027,
-	"quoteright":                  0x0027,
 	"parenleft":                   0x0028,
 	"parenright":                  0x0029,
 	"asterisk":                    0x002a,

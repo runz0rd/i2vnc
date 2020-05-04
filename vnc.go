@@ -24,8 +24,12 @@ func NewVncRemote(log Logger, config *Config, pw string) (*VncRemote, error) {
 	}
 	log.Printf("Connected.")
 
+	//todo figure this out
+	cc := vnc.NewClientConfig(pw)
+	cc.ServerMessageCh = make(chan vnc.ServerMessage)
+
 	// Negotiate connection with the server.
-	vcc, err := vnc.Connect(context.Background(), nc, vnc.NewClientConfig(pw))
+	vcc, err := vnc.Connect(context.Background(), nc, cc)
 	if err != nil {
 		return nil, fmt.Errorf("Error negotiating connection to VNC host. %v", err)
 	}
@@ -33,6 +37,9 @@ func NewVncRemote(log Logger, config *Config, pw string) (*VncRemote, error) {
 
 	// configure settle (UI) time to reduce lag
 	vnc.SetSettle(config.SettleMs)
+
+	// vcc.FramebufferUpdateRequest(rfbflags.RFBTrue, 10, 20, 30, 40)
+	// vcc.ListenAndHandle()
 
 	return &VncRemote{log, vcc}, nil
 }

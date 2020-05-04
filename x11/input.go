@@ -30,9 +30,7 @@ func NewInput(log i2vnc.Logger, r i2vnc.Remote, c *i2vnc.Config) (*X11Input, err
 		return nil, fmt.Errorf("Could not connect to X: %s", err)
 	}
 	// create a new event
-	e := i2vnc.NewEvent(
-		i2vnc.Screen{xu.Screen().WidthInPixels, xu.Screen().HeightInPixels},
-		i2vnc.Screen{r.ScreenW(), r.ScreenH()})
+	e := i2vnc.NewEvent(xu.Screen().WidthInPixels, xu.Screen().HeightInPixels)
 
 	return &X11Input{log, xu, r, e, c}, nil
 }
@@ -67,7 +65,7 @@ func (i X11Input) Grab() error {
 	xevent.MotionNotifyFun(i.handleMotionNotify).Connect(i.xu, w)
 
 	// start X event loop
-	i.log.Printf("Program initialized. Start pressing keys!")
+	i.log.Printf("Grab successful. Press %s to ungrab.", i.c.Hotkey)
 	xevent.Main(i.xu)
 	return nil
 }
@@ -78,6 +76,10 @@ func (i X11Input) warpPointerToScreenMid() {
 }
 
 func (i X11Input) handleKeyPress(xu *xgbutil.XUtil, e xevent.KeyPressEvent) {
+	// modStr := keybind.ModifierString(e.State)
+	// keyStr := keybind.LookupString(xu, e.State, e.Detail)
+	// spew.Dump(modStr, keyStr, e.Detail)
+
 	if i.isHotkey(e) {
 		return
 	}
@@ -114,13 +116,13 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 }
 
 func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
-	ked, err := newKeyEventDef(key)
+	kdef, err := newKeyEventDef(key)
 	if err != nil {
 		i.log.Errorf("%s", err)
 		return
 	}
-	i.e.Def = *ked
-	i.e.IsPress = isPress
+	i.e.HandleEvent(*kdef, isPress)
+	// spew.Dump(i.e)
 	i.sendEvent()
 }
 
@@ -133,42 +135,43 @@ func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
 	i.e.Def = *bed
 	i.e.IsPress = isPress
 	i.e.SetPrevCoords(uint16(x), uint16(y))
-	i.e.SetCoords(uint16(x), uint16(y))
+
+	//todo request update from server
+	i.e.SetCoords(uint16(x), uint16(y), i.r.ScreenW(), i.r.ScreenH())
 	i.sendEvent()
 }
 
 func (i X11Input) isHotkey(e xevent.KeyPressEvent) bool {
 	if keybind.KeyMatch(i.xu, i.c.Hotkey, e.State, e.Detail) {
-		i.log.Printf("Exit hotkey detected. Quitting...")
+		i.log.Printf("Hotkey %s pressed. Bye!", i.c.Hotkey)
 		xevent.Quit(i.xu)
 		return true
 	}
 	return false
 }
 
-func (i X11Input) handleScrollButtonEvent() bool {
+func (i X11Input) handleScrollButtonEvent(e *i2vnc.Event) bool {
 	// handle scroll button speed
-	if i.e.IsPress && (i.e.Def.Button == 4 || i.e.Def.Button == 5) {
+	if e.IsPress && (e.Def.Button == 4 || e.Def.Button == 5) {
 		for j := 0; j < int(i.c.ScrollSpeed); j++ {
-			i.r.SendPointerEvent(i.e.Def.Name, i.e.Def.Button,
-				i.e.Coords.X, i.e.Coords.Y)
+			i.r.SendPointerEvent(e.Def.Name, e.Def.Button, e.Coords.X, i.e.Coords.Y)
 		}
 		return true
 	}
 	return false
 }
 
-func (i X11Input) handleCapsLockEvent() bool {
-	if i.e.Def.Key == Keysyms["Caps_Lock"] {
-		if i.e.IsPress && !i.e.IsLocked {
-			i.e.IsLocked = true
+func handleCapsLockEvent(e *i2vnc.Event) bool {
+	if e.Def.Key == Keysyms["Caps_Lock"] {
+		if e.IsPress && !e.IsLocked {
+			e.IsLocked = true
 			return false
 		}
-		if i.e.IsPress && i.e.IsLocked {
-			i.e.IsLocked = false
+		if e.IsPress && e.IsLocked {
+			e.IsLocked = false
 			return false
 		}
-		if !i.e.IsPress && i.e.IsLocked {
+		if !e.IsPress && e.IsLocked {
 			return true
 		}
 	}
@@ -176,21 +179,20 @@ func (i X11Input) handleCapsLockEvent() bool {
 }
 
 func (i X11Input) sendEvent() {
-	i2vnc.DebugEvent(i.log, "Recieved", i.e.Def.IsKey, i.e.Def.Name,
+	i2vnc.DebugEvent(i.log, "Recieved", i.e.Definition().IsKey, i.e.Definition().Name,
 		i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
-	resolveMapping(i.c.Keymap, i.e)
+	mappedE := resolveMapping(i.c.Keymap, *i.e)
 
-	if i.e.Def.IsKey {
-		capsHandled := i.handleCapsLockEvent()
+	if mappedE.Definition().IsKey {
+		capsHandled := handleCapsLockEvent(mappedE)
 		if !capsHandled {
-			i.r.SendKeyEvent(i.e.Def.Name, i.e.Def.Key, i.e.IsPress)
+			i.r.SendKeyEvent(mappedE.Definition().Name, mappedE.Definition().Key, mappedE.IsPress)
 		}
 	} else {
-		//todo implement mouse speed
-		scrollHandled := i.handleScrollButtonEvent()
+		scrollHandled := i.handleScrollButtonEvent(mappedE)
 		if !scrollHandled {
-			i.r.SendPointerEvent(i.e.Def.Name, i.e.Def.Button,
-				i.e.Coords.X, i.e.Coords.Y)
+			i.r.SendPointerEvent(mappedE.Definition().Name, mappedE.Definition().Button,
+				mappedE.Coords.X, mappedE.Coords.Y)
 		}
 	}
 }
