@@ -22,7 +22,7 @@ type Remote interface {
 	ScreenW() uint16
 	ScreenH() uint16
 	SendKeyEvent(name string, key uint32, isPress bool) error
-	SendPointerEvent(name string, button uint8, x, y uint16) error
+	SendPointerEvent(name string, button uint8, x, y uint16, isPress bool) error
 }
 
 type Logger interface {
@@ -64,6 +64,10 @@ func NewConfig(path, name string) (*Config, error) {
 	return &config, nil
 }
 
+var modNames = [...]string{
+	"Control_L", "Control_R", "Alt_L", "Alt_R", "Super_L",
+	"Super_R", "Shift_L", "Shift_R", "Meta_L", "Meta_R"}
+
 type Screen struct {
 	X uint16
 	Y uint16
@@ -76,12 +80,8 @@ type EventDefintion struct {
 	IsKey  bool
 }
 
-var modNames = [...]string{
-	"Control_L", "Control_R", "Alt_L", "Alt_R", "Super_L",
-	"Super_R", "Shift_L", "Shift_R", "Meta_L", "Meta_R"}
-
 type Event struct {
-	Def        EventDefintion
+	Current    EventDefintion
 	Coords     Screen
 	PrevCoords Screen
 	localMax   Screen
@@ -91,47 +91,31 @@ type Event struct {
 	Mods       []EventDefintion
 }
 
-func NewEvent(localW, localH uint16) *Event {
+func NewEvent(localW, localH, remoteW, remoteH uint16) *Event {
 	return &Event{
-		localMax: Screen{localW, localH},
+		localMax:  Screen{localW, localH},
+		remoteMax: Screen{remoteW, remoteH},
 	}
-}
-
-func (e *Event) Definition() EventDefintion {
-	//todo no good, rething
-	if e.Def.Name != "" {
-		return e.Def
-	}
-	return e.Mods[0]
 }
 
 func (e *Event) HandleEvent(def EventDefintion, isPress bool) {
-	e.Def = EventDefintion{IsKey: true}
-	if !e.handleMod(def, isPress) {
-		e.Def = def
-		e.IsPress = isPress
-	}
-}
+	e.Current = def
+	e.IsPress = isPress
 
-func (e *Event) handleMod(def EventDefintion, isPress bool) bool {
-	for _, availableMod := range modNames {
-		if def.Name == availableMod {
-			for i := 0; i < len(e.Mods); i++ {
-				if def.Name == e.Mods[i].Name && !isPress {
-					// e.Mods[i] = e.Mods[len(e.Mods)-1]
-					// e.Mods = e.Mods[:len(e.Mods)-1]
-					e.Mods = append(e.Mods[:i], e.Mods[i+1:]...)
-					// all this to remove an item
-					return true
-				}
-			}
-			if isPress {
+	for i := 0; i < len(e.Mods); i++ {
+		if def.Name == e.Mods[i].Name && !isPress {
+			e.Mods = append(e.Mods[:i], e.Mods[i+1:]...)
+			return
+		}
+	}
+	if isPress {
+		for _, mn := range modNames {
+			if mn == def.Name {
 				e.Mods = append(e.Mods, def)
-				return true
+				return
 			}
 		}
 	}
-	return false
 }
 
 func (e *Event) SetToScreenMid(screenMaxW, screenMaxH uint16) {
@@ -139,9 +123,9 @@ func (e *Event) SetToScreenMid(screenMaxW, screenMaxH uint16) {
 	e.Coords.Y = screenMaxH / 2
 }
 
-func (e *Event) SetCoords(x, y, remoteW, remoteH uint16) {
-	e.Coords.X = e.calcOffset(e.Coords.X, x, e.localMax.X, remoteW)
-	e.Coords.Y = e.calcOffset(e.Coords.Y, y, e.localMax.Y, remoteH)
+func (e *Event) SetCoords(x, y uint16) {
+	e.Coords.X = e.calcOffset(e.Coords.X, x, e.localMax.X, e.remoteMax.X)
+	e.Coords.Y = e.calcOffset(e.Coords.Y, y, e.localMax.Y, e.remoteMax.Y)
 }
 
 func (e *Event) SetPrevCoords(x, y uint16) {
@@ -167,6 +151,6 @@ func DebugEvent(log Logger, state string, isKey bool, name string, x, y uint16, 
 	if isKey {
 		log.Debugf("%v key event: %v, press: %v", state, name, isPress)
 	} else {
-		log.Debugf("%v pointer event: %v, coords: %v %v", state, name, x, y)
+		log.Debugf("%v pointer event: %v, coords: %v %v, press: %v", state, name, x, y, isPress)
 	}
 }

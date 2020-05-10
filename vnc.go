@@ -61,12 +61,17 @@ func (r VncRemote) SendKeyEvent(name string, key uint32, isPress bool) error {
 	return nil
 }
 
-func (r VncRemote) SendPointerEvent(name string, button uint8, x, y uint16) error {
+func (r VncRemote) SendPointerEvent(name string, button uint8, x, y uint16, isPress bool) error {
+	if !isPress {
+		// The `button` is a bitwise mask of various Button values. When a button
+		// is set, it is pressed, when it is unset, it is released.
+		button = 0
+	}
 	if err := r.vcc.PointerEvent(buttonAdapter(button), x, y); err != nil {
 		r.log.Errorf("Failed to send pointer event: %v", err)
 		return fmt.Errorf("Failed to send pointer event: %v", err)
 	}
-	DebugEvent(r.log, "Sent", false, name, x, y, false)
+	DebugEvent(r.log, "Sent", false, name, x, y, isPress)
 	return nil
 }
 

@@ -74,87 +74,6 @@ func compressMotionNotify(xu *xgbutil.XUtil, ev xevent.MotionNotifyEvent) xevent
 	return lastE
 }
 
-type Pointer struct {
-	midW  uint16
-	midH  uint16
-	maxW  uint16
-	maxH  uint16
-	PrevX uint16
-	PrevY uint16
-	X     uint16
-	Y     uint16
-	Btn   uint8
-}
-
-func newPointer(localW, localH, remoteW, remoteH uint16) *Pointer {
-	return &Pointer{
-		midW: localW / 2,
-		midH: localH / 2,
-		maxW: remoteW,
-		maxH: remoteH,
-		X:    remoteW / 2,
-		Y:    remoteH / 2,
-		Btn:  0,
-	}
-}
-
-func (p *Pointer) set(x, y uint16) {
-	p.setX(x)
-	p.setY(y)
-}
-
-func (p *Pointer) setPrev(x, y uint16) {
-	p.PrevX = x
-	p.PrevY = y
-}
-
-func (p *Pointer) setX(event uint16) uint16 {
-	// add the change from the middle screen value (where the cursor resets)
-	p.X += event - p.midW
-	if p.X < 1 || p.X > 65535/2 {
-		// when going under 0, the value starts going down from max uint16
-		// if it is in the upper half of max uint16, reset to 0
-		p.X = 0
-	}
-	if p.X >= p.maxW && p.X <= 65535/2 {
-		// if it is in the lower half of max uint16, reset to max
-		p.X = p.maxW
-	}
-	return p.X
-}
-
-func (p *Pointer) setY(event uint16) uint16 {
-	p.Y += event - p.midH
-	if p.Y < 1 || p.Y > 65535/2 {
-		p.Y = 0
-	}
-	if p.Y >= p.maxH && p.Y <= 65535/2 {
-		p.Y = p.maxH
-	}
-	return p.Y
-}
-
-func validateConfig(c *i2vnc.Config) error {
-	_, _, err := getConfigDefs(c.Hotkey)
-	if err != nil {
-		return err
-	}
-	for from, to := range c.Keymap {
-		_, _, err = getConfigDefs(from)
-		if err != nil {
-			return err
-		}
-		_, _, err = getConfigDefs(to)
-		if err != nil {
-			return err
-		}
-		if from == c.Hotkey || to == c.Hotkey {
-			return fmt.Errorf("You shouldn't remap your hotkey.")
-		}
-	}
-	return nil
-}
-
 func findEventDef(name string) (*i2vnc.EventDefintion, error) {
 	ed := i2vnc.EventDefintion{Name: name}
 	var ok bool
@@ -201,26 +120,62 @@ func newButtonEventDef(button uint8) (*i2vnc.EventDefintion, error) {
 	return &e, nil
 }
 
-func getConfigDefs(value string) (*i2vnc.EventDefintion, *[]i2vnc.EventDefintion, error) {
-	e := i2vnc.Event{}
+func validateConfig(c *i2vnc.Config) error {
+	_, err := getConfigDefs(c.Hotkey)
+	if err != nil {
+		return err
+	}
+	for from, to := range c.Keymap {
+		_, err = getConfigDefs(from)
+		if err != nil {
+			return err
+		}
+		toDefs, err := getConfigDefs(to)
+		if err != nil {
+			return err
+		}
+		if len(toDefs) > 1 {
+			return fmt.Errorf("Mapping 'to' value should be a single key or button.")
+		}
+		if from == c.Hotkey || to == c.Hotkey {
+			return fmt.Errorf("You shouldn't remap your hotkey.")
+		}
+	}
+	return nil
+}
+
+func getConfigDefs(value string) ([]i2vnc.EventDefintion, error) {
+	var defs []i2vnc.EventDefintion
 	names := strings.Split(value, "+")
 	for _, name := range names {
 		def, err := findEventDef(name)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		e.HandleEvent(*def, true)
+		defs = append(defs, *def)
 	}
-	return &e.Def, &e.Mods, nil
+	return defs, nil
 }
 
 func resolveMapping(mapping map[string]string, e i2vnc.Event) *i2vnc.Event {
 	for from, to := range mapping {
-		fromDef, fromMods, _ := getConfigDefs(from)
-		if *fromDef == e.Def && reflect.DeepEqual(*fromMods, e.Mods) {
-			toDef, toMods, _ := getConfigDefs(to)
-			e.Def = *toDef
-			e.Mods = *toMods
+		fromDefs, _ := getConfigDefs(from)
+		// compare the remap combination to the currently
+		// pressed mods and the active event
+		compareTo := append(e.Mods, e.Current)
+		if len(e.Mods) == 1 && e.Mods[0] == e.Current {
+			// if the currently pressed mod is the same as
+			// the active event just use mods
+			compareTo = e.Mods
+		}
+		if reflect.DeepEqual(fromDefs, compareTo) {
+			// if the combo is correct
+			// use the configuration mapping for the active event
+			// the "to" configuration mapping can only be a single key/button
+			toDefs, _ := getConfigDefs(to)
+			e.Current = toDefs[0]
+			return &e
+			//todo support having a def combinations in TO
 		}
 	}
 	return &e

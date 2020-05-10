@@ -1,7 +1,7 @@
 package x11
 
 var Buttons map[string]uint8 = map[string]uint8{
-	"Button_None":   0,
+	"Motion":        0,
 	"Button_Left":   1,
 	"Button_Middle": 2,
 	"Button_Right":  3,

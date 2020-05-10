@@ -3,14 +3,15 @@ config:
     server: 192.168.0.15
     port: 5900
     hotkey: F9
-    scrollSpeed: 5
     settleMs: 0
     keymap:
       Alt_L: Meta_L
       Super_L: Control_L
       Control_L: Super_L
-      Shift_L+apostrophe: quotedbl
-      Shift_R+0: braceright
+      Shift_R+apostrophe: quotedbl
+      Shift_R+0: parenright
       Shift_R+minus: underscore
       Shift_R+equal: plus
       Shift_R+grave: asciitilde
+      # Button_8: Control_R+Left
+      # Button_9: Control_R+Right

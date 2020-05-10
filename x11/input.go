@@ -2,6 +2,7 @@ package x11
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/BurntSushi/xgb/xproto"
 	"github.com/BurntSushi/xgbutil"
@@ -30,7 +31,8 @@ func NewInput(log i2vnc.Logger, r i2vnc.Remote, c *i2vnc.Config) (*X11Input, err
 		return nil, fmt.Errorf("Could not connect to X: %s", err)
 	}
 	// create a new event
-	e := i2vnc.NewEvent(xu.Screen().WidthInPixels, xu.Screen().HeightInPixels)
+	e := i2vnc.NewEvent(xu.Screen().WidthInPixels, xu.Screen().HeightInPixels,
+		r.ScreenW(), r.ScreenH())
 
 	return &X11Input{log, xu, r, e, c}, nil
 }
@@ -55,7 +57,7 @@ func (i X11Input) Grab() error {
 	// set the local pointer to the middle of local screen
 	i.warpPointerToScreenMid()
 	// set the remote pointer to the middle of remote screen
-	i.r.SendPointerEvent("Button_None", 0, i.e.Coords.X, i.e.Coords.Y)
+	i.r.SendPointerEvent("Motion", 0, i.e.Coords.X, i.e.Coords.Y, false)
 
 	// connect event handlers
 	xevent.KeyPressFun(i.handleKeyPress).Connect(i.xu, w)
@@ -78,11 +80,6 @@ func (i X11Input) warpPointerToScreenMid() {
 func (i X11Input) handleKeyPress(xu *xgbutil.XUtil, e xevent.KeyPressEvent) {
 	// modStr := keybind.ModifierString(e.State)
 	// keyStr := keybind.LookupString(xu, e.State, e.Detail)
-	// spew.Dump(modStr, keyStr, e.Detail)
-
-	if i.isHotkey(e) {
-		return
-	}
 
 	key := uint32(keybind.KeysymGet(i.xu, e.Detail, 0))
 	i.handleKeyEvent(key, true)
@@ -98,7 +95,7 @@ func (i X11Input) handleButtonPress(xu *xgbutil.XUtil, e xevent.ButtonPressEvent
 }
 
 func (i X11Input) handleButtonRelease(xu *xgbutil.XUtil, e xevent.ButtonReleaseEvent) {
-	i.handlePointerEvent(0, false, e.EventX, e.EventY)
+	i.handlePointerEvent(uint8(e.Detail), false, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEvent) {
@@ -112,7 +109,9 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 		// keeps the cursor in the local screen center.
 		// needed for hitting the end on local screens while using a larger remote screen
 	}
-	i.handlePointerEvent(i.e.Def.Button, true, e.EventX, e.EventY)
+	// the current button and isPress must be sent along with
+	// motion events in order for drag to work
+	i.handlePointerEvent(i.e.Current.Button, i.e.IsPress, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
@@ -122,27 +121,29 @@ func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
 		return
 	}
 	i.e.HandleEvent(*kdef, isPress)
-	// spew.Dump(i.e)
 	i.sendEvent()
 }
 
 func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
-	bed, err := newButtonEventDef(button)
+	bdef, err := newButtonEventDef(button)
 	if err != nil {
 		i.log.Errorf("%s", err)
 		return
 	}
-	i.e.Def = *bed
-	i.e.IsPress = isPress
-	i.e.SetPrevCoords(uint16(x), uint16(y))
 
-	//todo request update from server
-	i.e.SetCoords(uint16(x), uint16(y), i.r.ScreenW(), i.r.ScreenH())
+	i.e.HandleEvent(*bdef, isPress)
+	i.e.SetPrevCoords(uint16(x), uint16(y))
+	i.e.SetCoords(uint16(x), uint16(y))
 	i.sendEvent()
 }
 
-func (i X11Input) isHotkey(e xevent.KeyPressEvent) bool {
-	if keybind.KeyMatch(i.xu, i.c.Hotkey, e.State, e.Detail) {
+func (i X11Input) handleHotkey() bool {
+	hotkeyDefs, _ := getConfigDefs(i.c.Hotkey)
+	compareTo := append(i.e.Mods, i.e.Current)
+	if len(i.e.Mods) == 1 && i.e.Mods[0] == i.e.Current {
+		compareTo = i.e.Mods
+	}
+	if reflect.DeepEqual(hotkeyDefs, compareTo) {
 		i.log.Printf("Hotkey %s pressed. Bye!", i.c.Hotkey)
 		xevent.Quit(i.xu)
 		return true
@@ -152,9 +153,10 @@ func (i X11Input) isHotkey(e xevent.KeyPressEvent) bool {
 
 func (i X11Input) handleScrollButtonEvent(e *i2vnc.Event) bool {
 	// handle scroll button speed
-	if e.IsPress && (e.Def.Button == 4 || e.Def.Button == 5) {
+	if e.IsPress && (e.Current.Button == 4 || e.Current.Button == 5) {
 		for j := 0; j < int(i.c.ScrollSpeed); j++ {
-			i.r.SendPointerEvent(e.Def.Name, e.Def.Button, e.Coords.X, i.e.Coords.Y)
+			i.r.SendPointerEvent(e.Current.Name, e.Current.Button,
+				e.Coords.X, i.e.Coords.Y, e.IsPress)
 		}
 		return true
 	}
@@ -162,7 +164,7 @@ func (i X11Input) handleScrollButtonEvent(e *i2vnc.Event) bool {
 }
 
 func handleCapsLockEvent(e *i2vnc.Event) bool {
-	if e.Def.Key == Keysyms["Caps_Lock"] {
+	if e.Current.Key == Keysyms["Caps_Lock"] {
 		if e.IsPress && !e.IsLocked {
 			e.IsLocked = true
 			return false
@@ -179,20 +181,23 @@ func handleCapsLockEvent(e *i2vnc.Event) bool {
 }
 
 func (i X11Input) sendEvent() {
-	i2vnc.DebugEvent(i.log, "Recieved", i.e.Definition().IsKey, i.e.Definition().Name,
-		i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
-	mappedE := resolveMapping(i.c.Keymap, *i.e)
+	// i2vnc.DebugEvent(i.log, "Recieved", i.e.Current.IsKey, i.e.Current.Name,
+	// 	i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
+	if i.handleHotkey() {
+		return
+	}
+	e := resolveMapping(i.c.Keymap, *i.e)
 
-	if mappedE.Definition().IsKey {
-		capsHandled := handleCapsLockEvent(mappedE)
+	if e.Current.IsKey {
+		capsHandled := handleCapsLockEvent(e)
 		if !capsHandled {
-			i.r.SendKeyEvent(mappedE.Definition().Name, mappedE.Definition().Key, mappedE.IsPress)
+			i.r.SendKeyEvent(e.Current.Name, e.Current.Key, e.IsPress)
 		}
 	} else {
-		scrollHandled := i.handleScrollButtonEvent(mappedE)
+		scrollHandled := i.handleScrollButtonEvent(e)
 		if !scrollHandled {
-			i.r.SendPointerEvent(mappedE.Definition().Name, mappedE.Definition().Button,
-				mappedE.Coords.X, mappedE.Coords.Y)
+			i.r.SendPointerEvent(e.Current.Name, e.Current.Button,
+				e.Coords.X, e.Coords.Y, e.IsPress)
 		}
 	}
 }
