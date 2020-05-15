@@ -2,13 +2,10 @@ package x11
 
 import (
 	"fmt"
-	"reflect"
-	"strings"
 
 	"github.com/BurntSushi/xgb/xproto"
 	"github.com/BurntSushi/xgbutil"
 	"github.com/BurntSushi/xgbutil/xevent"
-	"github.com/runz0rd/i2vnc"
 )
 
 // compressMotionNotify takes a MotionNotify event, and inspects the event
@@ -20,7 +17,7 @@ import (
 // EventX and EventY fields.
 // This function is not thread safe, since Peek returns a *copy* of the
 // event queue---which could be out of date by the time we dequeue events.
-func compressMotionNotify(xu *xgbutil.XUtil, ev xevent.MotionNotifyEvent) xevent.MotionNotifyEvent {
+func CompressMotionNotify(xu *xgbutil.XUtil, ev xevent.MotionNotifyEvent) xevent.MotionNotifyEvent {
 
 	// We force a round trip request so that we make sure to read all
 	// available events.
@@ -74,109 +71,32 @@ func compressMotionNotify(xu *xgbutil.XUtil, ev xevent.MotionNotifyEvent) xevent
 	return lastE
 }
 
-func findEventDef(name string) (*i2vnc.EventDefintion, error) {
-	ed := i2vnc.EventDefintion{Name: name}
-	var ok bool
-
-	ed.IsKey = true
-	ed.Key, ok = Keysyms[name]
-	if !ok {
-		ed.IsKey = false
-		ed.Button, ok = Buttons[name]
-		if !ok {
-			return nil, fmt.Errorf("No button or keysym definition found for '%v'", name)
+func FindDefName(key uint32, button uint8, isKey bool) (string, error) {
+	if isKey {
+		for k, v := range Keysyms {
+			if v == key {
+				return k, nil
+			}
+		}
+	} else {
+		for k, v := range Buttons {
+			if v == button {
+				return k, nil
+			}
 		}
 	}
-	return &ed, nil
+	return "", fmt.Errorf("No definition found for '%v'", button)
 }
 
-func newKeyEventDef(key uint32) (*i2vnc.EventDefintion, error) {
-	e := i2vnc.EventDefintion{}
-	for k, v := range Keysyms {
-		if v == key {
-			e.IsKey = true
-			e.Key = v
-			e.Name = k
-		}
+func FindDefValue(name string) (key uint32, button uint8, isKey bool, err error) {
+	k, ok := Keysyms[name]
+	if ok {
+		return k, 0, true, nil
 	}
-	if e.Name == "" {
-		return nil, fmt.Errorf("No keysym definition found for '%v'", key)
+	b, ok := Buttons[name]
+	if ok {
+		return 0, b, false, nil
 	}
-	return &e, nil
+	return 0, 0, false, fmt.Errorf("No button or keysym definition found for '%v'", name)
 }
 
-func newButtonEventDef(button uint8) (*i2vnc.EventDefintion, error) {
-	e := i2vnc.EventDefintion{}
-	for k, v := range Buttons {
-		if v == button {
-			e.IsKey = false
-			e.Button = v
-			e.Name = k
-		}
-	}
-	if e.Name == "" {
-		return nil, fmt.Errorf("No button definition found for '%v'", button)
-	}
-	return &e, nil
-}
-
-func validateConfig(c *i2vnc.Config) error {
-	_, err := getConfigDefs(c.Hotkey)
-	if err != nil {
-		return err
-	}
-	for from, to := range c.Keymap {
-		_, err = getConfigDefs(from)
-		if err != nil {
-			return err
-		}
-		toDefs, err := getConfigDefs(to)
-		if err != nil {
-			return err
-		}
-		if len(toDefs) > 1 {
-			return fmt.Errorf("Mapping 'to' value should be a single key or button.")
-		}
-		if from == c.Hotkey || to == c.Hotkey {
-			return fmt.Errorf("You shouldn't remap your hotkey.")
-		}
-	}
-	return nil
-}
-
-func getConfigDefs(value string) ([]i2vnc.EventDefintion, error) {
-	var defs []i2vnc.EventDefintion
-	names := strings.Split(value, "+")
-	for _, name := range names {
-		def, err := findEventDef(name)
-		if err != nil {
-			return nil, err
-		}
-		defs = append(defs, *def)
-	}
-	return defs, nil
-}
-
-func resolveMapping(mapping map[string]string, e i2vnc.Event) *i2vnc.Event {
-	for from, to := range mapping {
-		fromDefs, _ := getConfigDefs(from)
-		// compare the remap combination to the currently
-		// pressed mods and the active event
-		compareTo := append(e.Mods, e.Current)
-		if len(e.Mods) == 1 && e.Mods[0] == e.Current {
-			// if the currently pressed mod is the same as
-			// the active event just use mods
-			compareTo = e.Mods
-		}
-		if reflect.DeepEqual(fromDefs, compareTo) {
-			// if the combo is correct
-			// use the configuration mapping for the active event
-			// the "to" configuration mapping can only be a single key/button
-			toDefs, _ := getConfigDefs(to)
-			e.Current = toDefs[0]
-			return &e
-			//todo support having a def combinations in TO
-		}
-	}
-	return &e
-}

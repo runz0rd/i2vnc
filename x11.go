@@ -1,4 +1,4 @@
-package x11
+package i2vnc
 
 import (
 	"fmt"
@@ -9,20 +9,20 @@ import (
 	"github.com/BurntSushi/xgbutil/keybind"
 	"github.com/BurntSushi/xgbutil/mousebind"
 	"github.com/BurntSushi/xgbutil/xevent"
-	"github.com/runz0rd/i2vnc"
+	"github.com/runz0rd/i2vnc/x11"
 )
 
 type X11Input struct {
-	log i2vnc.Logger
+	log Logger
 	xu  *xgbutil.XUtil
-	r   i2vnc.Remote
-	e   *i2vnc.Event
-	c   *i2vnc.Config
+	r   Remote
+	e   *Event
+	c   *Config
 }
 
-func NewInput(log i2vnc.Logger, r i2vnc.Remote, c *i2vnc.Config) (*X11Input, error) {
+func NewX11Input(log Logger, r Remote, c *Config) (*X11Input, error) {
 	// validate config
-	if err := validateConfig(c); err != nil {
+	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	// create X connection
@@ -31,7 +31,7 @@ func NewInput(log i2vnc.Logger, r i2vnc.Remote, c *i2vnc.Config) (*X11Input, err
 		return nil, fmt.Errorf("Could not connect to X: %s", err)
 	}
 	// create a new event
-	e := i2vnc.NewEvent(xu.Screen().WidthInPixels, xu.Screen().HeightInPixels,
+	e := NewEvent(c.Keymap, xu.Screen().WidthInPixels, xu.Screen().HeightInPixels,
 		r.ScreenW(), r.ScreenH())
 
 	return &X11Input{log, xu, r, e, c}, nil
@@ -101,7 +101,7 @@ func (i X11Input) handleButtonRelease(xu *xgbutil.XUtil, e xevent.ButtonReleaseE
 func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEvent) {
 	// limit number of motion events,
 	// large number can make handler lag
-	e = compressMotionNotify(xu, e)
+	e = x11.CompressMotionNotify(xu, e)
 	// activate warp only if there are changes to prevX or prevY
 	// avoids the endless motionNotifyEvent loop
 	if e.EventX != int16(i.e.PrevCoords.X) || e.EventY != int16(i.e.PrevCoords.Y) {
@@ -111,21 +111,24 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 	}
 	// the current button and isPress must be sent along with
 	// motion events in order for drag to work
-	i.handlePointerEvent(i.e.Current.Button, i.e.IsPress, e.EventX, e.EventY)
+	i.handlePointerEvent(i.e.getDef().Button, i.e.IsPress, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
-	kdef, err := newKeyEventDef(key)
+	kdef, err := newEventDef(key, 0, true)
 	if err != nil {
 		i.log.Errorf("%s", err)
 		return
 	}
 	i.e.HandleEvent(*kdef, isPress)
-	i.sendEvent()
+	if i.handleHotkey() {
+		return
+	}
+	i.r.SendKeyEvent(i.e.getDef().Name, i.e.getDef().Key, i.e.IsPress)
 }
 
 func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
-	bdef, err := newButtonEventDef(button)
+	bdef, err := newEventDef(0, button, false)
 	if err != nil {
 		i.log.Errorf("%s", err)
 		return
@@ -134,15 +137,16 @@ func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
 	i.e.HandleEvent(*bdef, isPress)
 	i.e.SetPrevCoords(uint16(x), uint16(y))
 	i.e.SetCoords(uint16(x), uint16(y))
-	i.sendEvent()
+	scrollHandled := i.handleScrollButtonEvent()
+	if !scrollHandled {
+		i.r.SendPointerEvent(i.e.getDef().Name, i.e.getDef().Button,
+			i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
+	}
 }
 
 func (i X11Input) handleHotkey() bool {
 	hotkeyDefs, _ := getConfigDefs(i.c.Hotkey)
-	compareTo := append(i.e.Mods, i.e.Current)
-	if len(i.e.Mods) == 1 && i.e.Mods[0] == i.e.Current {
-		compareTo = i.e.Mods
-	}
+	compareTo := edSliceUnique(append(i.e.Mods, i.e.getDef()))
 	if reflect.DeepEqual(hotkeyDefs, compareTo) {
 		i.log.Printf("Hotkey %s pressed. Bye!", i.c.Hotkey)
 		xevent.Quit(i.xu)
@@ -151,53 +155,14 @@ func (i X11Input) handleHotkey() bool {
 	return false
 }
 
-func (i X11Input) handleScrollButtonEvent(e *i2vnc.Event) bool {
+func (i X11Input) handleScrollButtonEvent() bool {
 	// handle scroll button speed
-	if e.IsPress && (e.Current.Button == 4 || e.Current.Button == 5) {
+	if i.e.IsPress && (i.e.getDef().Button == x11.Buttons["Button_Up"] || i.e.getDef().Button == x11.Buttons["Button_Down"]) {
 		for j := 0; j < int(i.c.ScrollSpeed); j++ {
-			i.r.SendPointerEvent(e.Current.Name, e.Current.Button,
-				e.Coords.X, i.e.Coords.Y, e.IsPress)
+			i.r.SendPointerEvent(i.e.getDef().Name, i.e.getDef().Button,
+				i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
 		}
 		return true
 	}
 	return false
-}
-
-func handleCapsLockEvent(e *i2vnc.Event) bool {
-	if e.Current.Key == Keysyms["Caps_Lock"] {
-		if e.IsPress && !e.IsLocked {
-			e.IsLocked = true
-			return false
-		}
-		if e.IsPress && e.IsLocked {
-			e.IsLocked = false
-			return false
-		}
-		if !e.IsPress && e.IsLocked {
-			return true
-		}
-	}
-	return false
-}
-
-func (i X11Input) sendEvent() {
-	// i2vnc.DebugEvent(i.log, "Recieved", i.e.Current.IsKey, i.e.Current.Name,
-	// 	i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
-	if i.handleHotkey() {
-		return
-	}
-	e := resolveMapping(i.c.Keymap, *i.e)
-
-	if e.Current.IsKey {
-		capsHandled := handleCapsLockEvent(e)
-		if !capsHandled {
-			i.r.SendKeyEvent(e.Current.Name, e.Current.Key, e.IsPress)
-		}
-	} else {
-		scrollHandled := i.handleScrollButtonEvent(e)
-		if !scrollHandled {
-			i.r.SendPointerEvent(e.Current.Name, e.Current.Button,
-				e.Coords.X, e.Coords.Y, e.IsPress)
-		}
-	}
 }
