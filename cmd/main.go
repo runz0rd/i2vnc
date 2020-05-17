@@ -8,6 +8,7 @@ import (
 )
 
 func main() {
+	//todo tests!
 	var (
 		pw    = flag.String("p", "", "vnc server password string")
 		debug = flag.Bool("d", false, "debug mode bool")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,13 +55,13 @@ func (c *Config) validate() error {
 		if err != nil {
 			return err
 		}
-		toDefs, err := getConfigDefs(to)
+		_, err := getConfigDefs(to)
 		if err != nil {
 			return err
 		}
-		if len(toDefs) > 1 {
-			return fmt.Errorf("Mapping 'to' value should be a single key or button.")
-		}
+		// if len(toDefs) > 1 {
+		// 	return fmt.Errorf("Mapping 'to' value should be a single key or button.")
+		// }
 		if from == c.Hotkey || to == c.Hotkey {
 			return fmt.Errorf("You shouldn't remap your hotkey.")
 		}
@@ -108,13 +109,17 @@ var modNames = [...]string{
 	"Control_L", "Control_R", "Alt_L", "Alt_R", "Super_L",
 	"Super_R", "Shift_L", "Shift_R", "Meta_L", "Meta_R"}
 
-func IsMod(ed EventDefintion) bool {
+func isMod(ed EventDefintion) bool {
 	for _, mn := range modNames {
 		if mn == ed.Name {
 			return true
 		}
 	}
 	return false
+}
+
+func isCaps(ed EventDefintion) bool {
+	return ed.Key == x11.Keysyms["Caps_Lock"]
 }
 
 type Screen struct {
@@ -130,22 +135,24 @@ type EventDefintion struct {
 }
 
 type Event struct {
-	def        EventDefintion
-	Coords     Screen
-	PrevCoords Screen
-	localMax   Screen
-	remoteMax  Screen
-	IsPress    bool
-	IsLocked   bool
-	Mods       []EventDefintion
-	defMapping map[string]string
+	combo       []EventDefintion
+	Coords      Screen
+	PrevCoords  Screen
+	localMax    Screen
+	remoteMax   Screen
+	IsPress     bool
+	IsLocked    bool
+	Mods        []EventDefintion
+	defMapping  map[string]string
+	scrollSpeed uint8
 }
 
-func NewEvent(defMapping map[string]string, localW, localH, remoteW, remoteH uint16) *Event {
+func NewEvent(c *Config, localW, localH, remoteW, remoteH uint16) *Event {
 	return &Event{
-		localMax:   Screen{localW, localH},
-		remoteMax:  Screen{remoteW, remoteH},
-		defMapping: defMapping,
+		localMax:    Screen{localW, localH},
+		remoteMax:   Screen{remoteW, remoteH},
+		defMapping:  c.Keymap,
+		scrollSpeed: c.ScrollSpeed,
 	}
 }
 
@@ -154,17 +161,18 @@ func (e *Event) HandleEvent(def EventDefintion, isPress bool) {
 	// called right after event creation
 	// to ensure all mappings are correct
 	def = resolveDef(def, e.defMapping)
-	e.def = def
+	e.combo = []EventDefintion{def} // clear and assign new event
 	e.IsPress = isPress
 	e.handleMods(def, isPress)
 	e.handleCapsLock(def, isPress)
+	e.handleScrollButton(def, isPress)
 }
 
-func (e *Event) getDef() EventDefintion {
+func (e Event) getCombo() []EventDefintion {
 	// resolve combo key/button mappings
 	// called right before event sending
 	// to ensure avoid confusion around combo conversion
-	return resolveDefCombo(e.def, e.Mods, e.defMapping)
+	return resolveDefCombo(e.combo, e.Mods, e.defMapping, e.IsPress)
 }
 
 func (e *Event) handleMods(def EventDefintion, isPress bool) {
@@ -174,24 +182,39 @@ func (e *Event) handleMods(def EventDefintion, isPress bool) {
 			return
 		}
 	}
-	if isPress && IsMod(def) {
+	if isPress && isMod(def) {
 		e.Mods = append(e.Mods, def)
 	}
 }
 
 func (e *Event) handleCapsLock(def EventDefintion, isPress bool) {
-	if def.Key == x11.Keysyms["Caps_Lock"] {
+	if isCaps(def) {
 		if isPress && !e.IsLocked {
+			// if press and unlocked, lock
 			e.IsLocked = true
 			return
 		}
 		if isPress && e.IsLocked {
+			// if press and locked, unlock,
+			// but dont send the press
 			e.IsLocked = false
+			e.combo = nil
 			return
 		}
 		if !isPress && e.IsLocked {
-			// modify caps to do a press instead of release if its locked
-			e.IsPress = true
+			// if release and locked,
+			// but dont sent release
+			e.combo = nil
+			return
+		}
+	}
+}
+
+func (e *Event) handleScrollButton(def EventDefintion, isPress bool) {
+	if isPress && (def.Button == x11.Buttons["Button_Up"] || def.Button == x11.Buttons["Button_Down"]) {
+		for i := 1; i < int(e.scrollSpeed); i++ {
+			// not using <= since the first one gets assigned in HandleEvent
+			e.combo = append(e.combo, def)
 		}
 	}
 }
@@ -202,8 +225,8 @@ func (e *Event) SetToScreenMid(screenMaxW, screenMaxH uint16) {
 }
 
 func (e *Event) SetCoords(x, y uint16) {
-	e.Coords.X = e.calcOffset(e.Coords.X, x, e.localMax.X, e.remoteMax.X)
-	e.Coords.Y = e.calcOffset(e.Coords.Y, y, e.localMax.Y, e.remoteMax.Y)
+	e.Coords.X = screenOffset(e.Coords.X, x, e.localMax.X, e.remoteMax.X)
+	e.Coords.Y = screenOffset(e.Coords.Y, y, e.localMax.Y, e.remoteMax.Y)
 }
 
 func (e *Event) SetPrevCoords(x, y uint16) {
@@ -211,7 +234,7 @@ func (e *Event) SetPrevCoords(x, y uint16) {
 	e.PrevCoords.Y = y
 }
 
-func (e *Event) calcOffset(value, offset, localMax, remoteMax uint16) uint16 {
+func screenOffset(value, offset, localMax, remoteMax uint16) uint16 {
 	value += offset - localMax/2
 	if value < 1 || value > 65535/2 {
 		// when going under 0, the value starts going down from max uint16
@@ -223,6 +246,58 @@ func (e *Event) calcOffset(value, offset, localMax, remoteMax uint16) uint16 {
 		value = remoteMax
 	}
 	return value
+}
+
+func resolveDef(def EventDefintion, defMapping map[string]string) EventDefintion {
+	for from, to := range defMapping {
+		fromDefs, _ := getConfigDefs(from)
+		if len(fromDefs) == 1 && fromDefs[0] == def {
+			toDefs, _ := getConfigDefs(to)
+			if len(toDefs) == 1 {
+				return toDefs[0]
+			}
+		}
+	}
+	return def
+}
+
+func resolveDefCombo(combo []EventDefintion, mods []EventDefintion,
+	defMapping map[string]string, isPress bool) []EventDefintion {
+	unique := edSliceUnique(append(combo, mods...))
+	for from, to := range defMapping {
+		fromDefs, _ := getConfigDefs(from)
+		intersect := edIntersection(unique, fromDefs)
+		if len(intersect) == len(unique) && len(intersect) == len(fromDefs) {
+			toDefs, _ := getConfigDefs(to)
+			if len(fromDefs) == 1 && len(toDefs) == 1 {
+				// covered by resolveDef
+				return combo
+			}
+			return edSliceSortByPress(toDefs, isPress)
+		}
+	}
+	return combo
+}
+
+func edSliceSortByPress(s []EventDefintion, isPress bool) []EventDefintion {
+	sortMod := func(i, j int) bool {
+		if isMod(s[i]) && !isMod(s[j]) {
+			return true
+		}
+		return false
+	}
+	sortModReverse := func(i, j int) bool {
+		if isMod(s[i]) && !isMod(s[j]) {
+			return false
+		}
+		return true
+	}
+	less := sortMod
+	if !isPress {
+		less = sortModReverse
+	}
+	sort.Slice(s, less)
+	return s
 }
 
 func edSliceUnique(s []EventDefintion) []EventDefintion {
@@ -272,32 +347,6 @@ func newEventDefByName(name string) (*EventDefintion, error) {
 		return nil, err
 	}
 	return &EventDefintion{name, key, button, isKey}, nil
-}
-
-func resolveDef(def EventDefintion, defMapping map[string]string) EventDefintion {
-	for from, to := range defMapping {
-		fromDefs, _ := getConfigDefs(from)
-		if len(fromDefs) == 1 && fromDefs[0] == def {
-			toDefs, _ := getConfigDefs(to)
-			return toDefs[0]
-		}
-	}
-	return def
-}
-
-func resolveDefCombo(def EventDefintion, mods []EventDefintion, defMapping map[string]string) EventDefintion {
-	combo := edSliceUnique(append(mods, def))
-	if len(combo) == 1 {
-		return def
-	}
-	for from, to := range defMapping {
-		fromDefs, _ := getConfigDefs(from)
-		if reflect.DeepEqual(combo, fromDefs) {
-			toDefs, _ := getConfigDefs(to)
-			return toDefs[0]
-		}
-	}
-	return def
 }
 
 func DebugEvent(log Logger, state string, isKey bool, name string, x, y uint16, isPress bool) {

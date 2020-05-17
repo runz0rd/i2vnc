@@ -31,8 +31,12 @@ func NewX11Input(log Logger, r Remote, c *Config) (*X11Input, error) {
 		return nil, fmt.Errorf("Could not connect to X: %s", err)
 	}
 	// create a new event
-	e := NewEvent(c.Keymap, xu.Screen().WidthInPixels, xu.Screen().HeightInPixels,
-		r.ScreenW(), r.ScreenH())
+	e := NewEvent(c,
+		xu.Screen().WidthInPixels,
+		xu.Screen().HeightInPixels,
+		r.ScreenW(),
+		r.ScreenH(),
+	)
 
 	return &X11Input{log, xu, r, e, c}, nil
 }
@@ -111,7 +115,12 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 	}
 	// the current button and isPress must be sent along with
 	// motion events in order for drag to work
-	i.handlePointerEvent(i.e.getDef().Button, i.e.IsPress, e.EventX, e.EventY)
+	button := x11.Buttons["Motion"]
+	c := i.e.getCombo()
+	if len(c) > 0 {
+		button = c[0].Button
+	}
+	i.handlePointerEvent(button, i.e.IsPress, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
@@ -124,7 +133,7 @@ func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
 	if i.handleHotkey() {
 		return
 	}
-	i.r.SendKeyEvent(i.e.getDef().Name, i.e.getDef().Key, i.e.IsPress)
+	i.sendEvents()
 }
 
 func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
@@ -137,31 +146,26 @@ func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
 	i.e.HandleEvent(*bdef, isPress)
 	i.e.SetPrevCoords(uint16(x), uint16(y))
 	i.e.SetCoords(uint16(x), uint16(y))
-	scrollHandled := i.handleScrollButtonEvent()
-	if !scrollHandled {
-		i.r.SendPointerEvent(i.e.getDef().Name, i.e.getDef().Button,
-			i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
+	i.sendEvents()
+}
+
+func (i X11Input) sendEvents() {
+	for _, c := range i.e.getCombo() {
+		if c.IsKey {
+			i.r.SendKeyEvent(c.Name, c.Key, i.e.IsPress)
+		} else {
+			i.r.SendPointerEvent(c.Name, c.Button,
+				i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
+		}
 	}
 }
 
 func (i X11Input) handleHotkey() bool {
 	hotkeyDefs, _ := getConfigDefs(i.c.Hotkey)
-	compareTo := edSliceUnique(append(i.e.Mods, i.e.getDef()))
+	compareTo := edSliceUnique(append(i.e.Mods, i.e.getCombo()...))
 	if reflect.DeepEqual(hotkeyDefs, compareTo) {
 		i.log.Printf("Hotkey %s pressed. Bye!", i.c.Hotkey)
 		xevent.Quit(i.xu)
-		return true
-	}
-	return false
-}
-
-func (i X11Input) handleScrollButtonEvent() bool {
-	// handle scroll button speed
-	if i.e.IsPress && (i.e.getDef().Button == x11.Buttons["Button_Up"] || i.e.getDef().Button == x11.Buttons["Button_Down"]) {
-		for j := 0; j < int(i.c.ScrollSpeed); j++ {
-			i.r.SendPointerEvent(i.e.getDef().Name, i.e.getDef().Button,
-				i.e.Coords.X, i.e.Coords.Y, i.e.IsPress)
-		}
 		return true
 	}
 	return false

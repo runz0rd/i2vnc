@@ -14,5 +14,7 @@ config:
       Shift_R+minus: underscore
       Shift_R+equal: plus
       Shift_R+grave: asciitilde
-      # Button_8: Control_R+Left
-      # Button_9: Control_R+Right
+      Button_8: Super_R+Left
+      Button_9: Super_R+Right
+      Shift_L+a: underscore+a
+      #todo make sure this makes sense
