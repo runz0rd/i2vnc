@@ -85,7 +85,7 @@ func FindDefName(key uint32, button uint8, isKey bool) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("No definition found for '%v'", button)
+	return "", fmt.Errorf("no definition found for '%v'", button)
 }
 
 func FindDefValue(name string) (key uint32, button uint8, isKey bool, err error) {
@@ -97,6 +97,5 @@ func FindDefValue(name string) (key uint32, button uint8, isKey bool, err error)
 	if ok {
 		return 0, b, false, nil
 	}
-	return 0, 0, false, fmt.Errorf("No button or keysym definition found for '%v'", name)
+	return 0, 0, false, fmt.Errorf("no button or keysym definition found for '%v'", name)
 }
-

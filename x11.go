@@ -3,6 +3,7 @@ package i2vnc
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/BurntSushi/xgb/xproto"
 	"github.com/BurntSushi/xgbutil"
@@ -29,7 +30,7 @@ func NewX11Input(logger *logrus.Logger, r Remote, c *Config) (*X11Input, error) 
 	// create X connection
 	xu, err := xgbutil.NewConn()
 	if err != nil {
-		return nil, fmt.Errorf("Could not connect to X: %s", err)
+		return nil, fmt.Errorf("could not connect to X: %s", err)
 	}
 	// create a new event
 	e := NewEvent(c,
@@ -38,7 +39,7 @@ func NewX11Input(logger *logrus.Logger, r Remote, c *Config) (*X11Input, error) 
 		r.ScreenW(),
 		r.ScreenH(),
 	)
-	l := logrus.NewEntry(logger).WithField(LoggerFieldInput, "x11")
+	l := logrus.NewEntry(logger)
 	return &X11Input{l, xu, r, e, c}, nil
 }
 
@@ -49,12 +50,12 @@ func (i X11Input) Grab() error {
 	// grab keyboard and pointer
 	keybind.Initialize(i.xu)
 	if err := keybind.GrabKeyboard(i.xu, w); err != nil {
-		return fmt.Errorf("Could not grab keyboard: %s", err)
+		return fmt.Errorf("could not grab keyboard: %s", err)
 	}
 	mousebind.Initialize(i.xu)
 	if grabbed, err := mousebind.GrabPointer(i.xu, w, xproto.WindowNone,
 		xproto.CursorNone); !grabbed {
-		return fmt.Errorf("Could not grab pointer: %s", err)
+		return fmt.Errorf("could not grab pointer: %s", err)
 	}
 
 	// set coords to middle of remote screen
@@ -62,7 +63,7 @@ func (i X11Input) Grab() error {
 	// set the local pointer to the middle of local screen
 	i.warpPointerToScreenMid()
 	// set the remote pointer to the middle of remote screen
-	i.r.SendPointerEvent("Motion", 0, i.e.Coords.X, i.e.Coords.Y, false)
+	i.r.SendPointerEvent("motion", 0, i.e.Coords.X, i.e.Coords.Y, false)
 
 	// connect event handlers
 	xevent.KeyPressFun(i.handleKeyPress).Connect(i.xu, w)
@@ -72,7 +73,8 @@ func (i X11Input) Grab() error {
 	xevent.MotionNotifyFun(i.handleMotionNotify).Connect(i.xu, w)
 
 	// start X event loop
-	i.l.Infof("Grab successful. Press %q to ungrab.", i.c.Hotkey)
+	i.l.Infof("grab successful")
+	i.l.Infof("press %q to ungrab", i.c.Hotkey)
 	xevent.Main(i.xu)
 	return nil
 }
@@ -91,11 +93,11 @@ func (i X11Input) handleKeyRelease(xu *xgbutil.XUtil, e xevent.KeyReleaseEvent) 
 }
 
 func (i X11Input) handleButtonPress(xu *xgbutil.XUtil, e xevent.ButtonPressEvent) {
-	i.handlePointerEvent(uint8(e.Detail), true, e.EventX, e.EventY)
+	i.handlePointerEvent(e.State, uint8(e.Detail), true, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleButtonRelease(xu *xgbutil.XUtil, e xevent.ButtonReleaseEvent) {
-	i.handlePointerEvent(uint8(e.Detail), false, e.EventX, e.EventY)
+	i.handlePointerEvent(e.State, uint8(e.Detail), false, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEvent) {
@@ -116,13 +118,14 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 	if len(c) > 0 {
 		button = c[0].Button
 	}
-	i.handlePointerEvent(button, i.e.IsPress, e.EventX, e.EventY)
+	i.handlePointerEvent(e.State, button, i.e.IsPress, e.EventX, e.EventY)
 }
 
 func (i X11Input) handleKeyEvent(state uint16, keycode xproto.Keycode, isPress bool) {
+	DebugX11Event(i.l, "X11Input", state, keycode, 0, 0, 0, isPress)
 	keysym := keybind.KeysymGet(i.xu, keycode, 0)
 	shifted := keybind.KeysymGet(i.xu, keycode, 1)
-	if keybind.ModifierString(state) == "shift-mod2" && shifted != 0 {
+	if strings.Contains(keybind.ModifierString(state), "shift") && shifted != 0 {
 		// only for shiftable characters, since mods shifted keycode is 0
 		keysym = shifted
 	}
@@ -139,7 +142,8 @@ func (i X11Input) handleKeyEvent(state uint16, keycode xproto.Keycode, isPress b
 	i.sendEvents()
 }
 
-func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
+func (i X11Input) handlePointerEvent(state uint16, button uint8, isPress bool, x, y int16) {
+	DebugX11Event(i.l, "X11Input", state, 0, button, x, y, isPress)
 	bdef, err := newEventDef(0, button, false)
 	if err != nil {
 		i.l.WithError(err).Error("handlePointerEvent failed")

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/xgb/xproto"
 	"github.com/runz0rd/i2vnc/x11"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -19,12 +20,14 @@ const (
 	X11WindowSystem         = iota
 	LoggerFieldRemote       = "remote"
 	LoggerFieldInput        = "input"
+	LoggerFieldSource       = "source"
 	LoggerFieldEvent        = "event"
 	LoggerFieldEventKey     = "key"
 	LoggerFieldEventButton  = "button"
 	LoggerFieldName         = "name"
 	LoggerFieldEventIsPress = "isPress"
 	LoggerFieldEventCoords  = "coords"
+	LoggerFieldEventX11     = "x11"
 )
 
 type Input interface {
@@ -32,6 +35,7 @@ type Input interface {
 }
 
 type Remote interface {
+	Disconnect() error
 	ScreenW() uint16
 	ScreenH() uint16
 	SendKeyEvent(name string, key uint32, isPress bool) error
@@ -66,7 +70,7 @@ func (c *Config) validate() error {
 		// 	return fmt.Errorf("Mapping 'to' value should be a single key or button.")
 		// }
 		if from == c.Hotkey || to == c.Hotkey {
-			return fmt.Errorf("You shouldn't remap your hotkey.")
+			return fmt.Errorf("you shouldn't remap your hotkey")
 		}
 	}
 	return nil
@@ -96,12 +100,12 @@ func NewConfig(path, name string) (*Config, error) {
 		Config map[string]Config
 	}
 	if err := yaml.NewDecoder(file).Decode(&wrapper); err != nil {
-		return nil, fmt.Errorf("Unable to decode config: %s", err)
+		return nil, fmt.Errorf("unable to decode config: %s", err)
 	}
 
 	config, ok := wrapper.Config[name]
 	if !ok {
-		return nil, fmt.Errorf("Config named '%v' not found.", name)
+		return nil, fmt.Errorf("config named '%v' not found", name)
 	}
 	config.SettleMs = config.SettleMs * time.Millisecond
 
@@ -206,7 +210,7 @@ func (e *Event) handleCapsLock(def EventDefintion, isPress bool) {
 		}
 		if !isPress && e.IsLocked {
 			// if release and locked,
-			// but dont sent release
+			// but dont send release
 			e.combo = nil
 			return
 		}
@@ -352,7 +356,7 @@ func newEventDefByName(name string) (*EventDefintion, error) {
 	return &EventDefintion{name, key, button, isKey}, nil
 }
 
-func DebugEvent(l *logrus.Entry, state string, isKey bool, name string, x, y uint16, isPress bool) {
+func DebugEvent(l *logrus.Entry, source string, isKey bool, name string, x, y uint16, isPress bool) {
 	event := LoggerFieldEventButton
 	if isKey {
 		event = LoggerFieldEventKey
@@ -363,7 +367,16 @@ func DebugEvent(l *logrus.Entry, state string, isKey bool, name string, x, y uin
 		LoggerFieldName:         name,
 		LoggerFieldEvent:        event,
 	})
-	l.Debug(state)
+	l.Debug(source)
+}
+
+func DebugX11Event(l *logrus.Entry, source string, state uint16, keycode xproto.Keycode, button uint8, x, y int16, isPress bool) {
+	l = l.WithFields(logrus.Fields{
+		LoggerFieldEventCoords:  fmt.Sprintf("%v %v", x, y),
+		LoggerFieldEventIsPress: isPress,
+		LoggerFieldEventX11:     fmt.Sprintf("state:%v keycode:%v button:%v", state, keycode, button),
+	})
+	l.Debug(source)
 }
 
 func StringInSlice(s string, slice []string) bool {

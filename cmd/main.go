@@ -23,17 +23,18 @@ func main() {
 
 	config, err := i2vnc.NewConfig(*cfile, *cname)
 	if err != nil {
-		logger.WithField(logrus.FieldKeyFile, *cfile).WithError(err).Fatalf("Failed loading configuration")
+		logger.WithField(logrus.FieldKeyFile, *cfile).WithError(err).Fatalf("failed loading configuration")
 	}
 	remote, err := i2vnc.NewVncRemote(logger, config, *pw)
 	if err != nil {
-		logger.WithError(err).Fatalf("Failed connecting to remote.")
+		logger.WithError(err).Fatalf("failed connecting to remote")
 	}
+	defer remote.Disconnect()
 	input, err := i2vnc.NewX11Input(logger, remote, config)
 	if err != nil {
-		logger.WithError(err).Fatalf("Failed initializing input.")
+		logger.WithError(err).Fatalf("failed initializing input")
 	}
 	if err := input.Grab(); err != nil {
-		logger.WithError(err).Fatalf("Failed grabbing input.")
+		logger.WithError(err).Fatalf("failed grabbing input")
 	}
 }
