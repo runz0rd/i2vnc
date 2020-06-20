@@ -122,9 +122,9 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 func (i X11Input) handleKeyEvent(state uint16, keycode xproto.Keycode, isPress bool) {
 	keysym := keybind.KeysymGet(i.xu, keycode, 0)
 	shifted := keybind.KeysymGet(i.xu, keycode, 1)
-	if state == 17 && shifted != 0 {
+	if keybind.ModifierString(state) == "shift-mod2" && shifted != 0 {
+		// only for shiftable characters, since mods shifted keycode is 0
 		keysym = shifted
-		// my hands are tied?
 	}
 
 	kdef, err := newEventDef(uint32(keysym), 0, true)
