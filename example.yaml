@@ -1,20 +1,15 @@
 config:
   mac:
-    server: 192.168.0.15
+    server: 192.168.0.10
     port: 5900
     hotkey: F9
-    scrollSpeed: 6
+    scrollSpeed: 4
     settleMs: 0
     keymap:
       Alt_L: Meta_L
       Super_L: Control_L
       Control_L: Super_L
-      Shift_R+apostrophe: quotedbl
-      Shift_R+0: parenright
-      Shift_R+minus: underscore
-      Shift_R+equal: plus
-      Shift_R+grave: asciitilde
       Button_8: Super_R+Left
       Button_9: Super_R+Right
-      Shift_L+a: underscore+a
-      #todo make sure this makes sense
+      Home: Super_R+Left
+      End: Super_R+Right

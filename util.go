@@ -9,13 +9,22 @@ import (
 	"time"
 
 	"github.com/runz0rd/i2vnc/x11"
+	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
 
 type WindowSystem uint8
 
 const (
-	X11 WindowSystem = iota
+	X11WindowSystem         = iota
+	LoggerFieldRemote       = "remote"
+	LoggerFieldInput        = "input"
+	LoggerFieldEvent        = "event"
+	LoggerFieldEventKey     = "key"
+	LoggerFieldEventButton  = "button"
+	LoggerFieldName         = "name"
+	LoggerFieldEventIsPress = "isPress"
+	LoggerFieldEventCoords  = "coords"
 )
 
 type Input interface {
@@ -27,12 +36,6 @@ type Remote interface {
 	ScreenH() uint16
 	SendKeyEvent(name string, key uint32, isPress bool) error
 	SendPointerEvent(name string, button uint8, x, y uint16, isPress bool) error
-}
-
-type Logger interface {
-	Printf(format string, v ...interface{})
-	Debugf(format string, v ...interface{})
-	Errorf(format string, v ...interface{})
 }
 
 type Config struct {
@@ -105,7 +108,7 @@ func NewConfig(path, name string) (*Config, error) {
 	return &config, nil
 }
 
-var modNames = [...]string{
+var modNames = []string{
 	"Control_L", "Control_R", "Alt_L", "Alt_R", "Super_L",
 	"Super_R", "Shift_L", "Shift_R", "Meta_L", "Meta_R"}
 
@@ -349,10 +352,25 @@ func newEventDefByName(name string) (*EventDefintion, error) {
 	return &EventDefintion{name, key, button, isKey}, nil
 }
 
-func DebugEvent(log Logger, state string, isKey bool, name string, x, y uint16, isPress bool) {
+func DebugEvent(l *logrus.Entry, state string, isKey bool, name string, x, y uint16, isPress bool) {
+	event := LoggerFieldEventButton
 	if isKey {
-		log.Debugf("%v key event: %v, press: %v", state, name, isPress)
-	} else {
-		log.Debugf("%v pointer event: %v, coords: %v %v, press: %v", state, name, x, y, isPress)
+		event = LoggerFieldEventKey
 	}
+	l = l.WithFields(logrus.Fields{
+		LoggerFieldEventCoords:  fmt.Sprintf("%v %v", x, y),
+		LoggerFieldEventIsPress: isPress,
+		LoggerFieldName:         name,
+		LoggerFieldEvent:        event,
+	})
+	l.Debug(state)
+}
+
+func StringInSlice(s string, slice []string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

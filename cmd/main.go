@@ -16,23 +16,24 @@ func main() {
 		cname = flag.String("cname", "default", "name of the config to use string")
 	)
 	flag.Parse()
-	log := logrus.New()
+	logger := logrus.New()
 	if *debug {
-		log.SetLevel(logrus.DebugLevel)
+		logger.SetLevel(logrus.DebugLevel)
 	}
+
 	config, err := i2vnc.NewConfig(*cfile, *cname)
 	if err != nil {
-		log.WithError(err).Fatalf("Failed loading configuration %v from %v.", *cname, *cfile)
+		logger.WithField(logrus.FieldKeyFile, *cfile).WithError(err).Fatalf("Failed loading configuration")
 	}
-	remote, err := i2vnc.NewVncRemote(log, config, *pw)
+	remote, err := i2vnc.NewVncRemote(logger, config, *pw)
 	if err != nil {
-		log.WithError(err).Fatalf("Failed connecting to remote.")
+		logger.WithError(err).Fatalf("Failed connecting to remote.")
 	}
-	input, err := i2vnc.NewX11Input(log, remote, config)
+	input, err := i2vnc.NewX11Input(logger, remote, config)
 	if err != nil {
-		log.WithError(err).Fatalf("Failed initializing input.")
+		logger.WithError(err).Fatalf("Failed initializing input.")
 	}
 	if err := input.Grab(); err != nil {
-		log.WithError(err).Fatalf("Failed grabbing input.")
+		logger.WithError(err).Fatalf("Failed grabbing input.")
 	}
 }

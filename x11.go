@@ -10,17 +10,18 @@ import (
 	"github.com/BurntSushi/xgbutil/mousebind"
 	"github.com/BurntSushi/xgbutil/xevent"
 	"github.com/runz0rd/i2vnc/x11"
+	"github.com/sirupsen/logrus"
 )
 
 type X11Input struct {
-	log Logger
-	xu  *xgbutil.XUtil
-	r   Remote
-	e   *Event
-	c   *Config
+	l  *logrus.Entry
+	xu *xgbutil.XUtil
+	r  Remote
+	e  *Event
+	c  *Config
 }
 
-func NewX11Input(log Logger, r Remote, c *Config) (*X11Input, error) {
+func NewX11Input(logger *logrus.Logger, r Remote, c *Config) (*X11Input, error) {
 	// validate config
 	if err := c.validate(); err != nil {
 		return nil, err
@@ -37,8 +38,8 @@ func NewX11Input(log Logger, r Remote, c *Config) (*X11Input, error) {
 		r.ScreenW(),
 		r.ScreenH(),
 	)
-
-	return &X11Input{log, xu, r, e, c}, nil
+	l := logrus.NewEntry(logger).WithField(LoggerFieldInput, "x11")
+	return &X11Input{l, xu, r, e, c}, nil
 }
 
 func (i X11Input) Grab() error {
@@ -71,7 +72,7 @@ func (i X11Input) Grab() error {
 	xevent.MotionNotifyFun(i.handleMotionNotify).Connect(i.xu, w)
 
 	// start X event loop
-	i.log.Printf("Grab successful. Press %s to ungrab.", i.c.Hotkey)
+	i.l.Infof("Grab successful. Press %q to ungrab.", i.c.Hotkey)
 	xevent.Main(i.xu)
 	return nil
 }
@@ -82,16 +83,11 @@ func (i X11Input) warpPointerToScreenMid() {
 }
 
 func (i X11Input) handleKeyPress(xu *xgbutil.XUtil, e xevent.KeyPressEvent) {
-	// modStr := keybind.ModifierString(e.State)
-	// keyStr := keybind.LookupString(xu, e.State, e.Detail)
-
-	key := uint32(keybind.KeysymGet(i.xu, e.Detail, 0))
-	i.handleKeyEvent(key, true)
+	i.handleKeyEvent(e.State, e.Detail, true)
 }
 
 func (i X11Input) handleKeyRelease(xu *xgbutil.XUtil, e xevent.KeyReleaseEvent) {
-	key := uint32(keybind.KeysymGet(i.xu, e.Detail, 0))
-	i.handleKeyEvent(key, false)
+	i.handleKeyEvent(e.State, e.Detail, false)
 }
 
 func (i X11Input) handleButtonPress(xu *xgbutil.XUtil, e xevent.ButtonPressEvent) {
@@ -123,10 +119,17 @@ func (i X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEve
 	i.handlePointerEvent(button, i.e.IsPress, e.EventX, e.EventY)
 }
 
-func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
-	kdef, err := newEventDef(key, 0, true)
+func (i X11Input) handleKeyEvent(state uint16, keycode xproto.Keycode, isPress bool) {
+	keysym := keybind.KeysymGet(i.xu, keycode, 0)
+	shifted := keybind.KeysymGet(i.xu, keycode, 1)
+	if state == 17 && shifted != 0 {
+		keysym = shifted
+		// my hands are tied?
+	}
+
+	kdef, err := newEventDef(uint32(keysym), 0, true)
 	if err != nil {
-		i.log.Errorf("%s", err)
+		i.l.WithError(err).Error("handleKeyEvent failed")
 		return
 	}
 	i.e.HandleEvent(*kdef, isPress)
@@ -139,7 +142,7 @@ func (i X11Input) handleKeyEvent(key uint32, isPress bool) {
 func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
 	bdef, err := newEventDef(0, button, false)
 	if err != nil {
-		i.log.Errorf("%s", err)
+		i.l.WithError(err).Error("handlePointerEvent failed")
 		return
 	}
 
@@ -150,6 +153,7 @@ func (i X11Input) handlePointerEvent(button uint8, isPress bool, x, y int16) {
 }
 
 func (i X11Input) sendEvents() {
+	//todo bug: sending shift+'(") when using home/end
 	for _, c := range i.e.getCombo() {
 		if c.IsKey {
 			i.r.SendKeyEvent(c.Name, c.Key, i.e.IsPress)
@@ -164,7 +168,7 @@ func (i X11Input) handleHotkey() bool {
 	hotkeyDefs, _ := getConfigDefs(i.c.Hotkey)
 	compareTo := edSliceUnique(append(i.e.Mods, i.e.getCombo()...))
 	if reflect.DeepEqual(hotkeyDefs, compareTo) {
-		i.log.Printf("Hotkey %s pressed. Bye!", i.c.Hotkey)
+		i.l.Infof("Hotkey %s pressed. Bye!", i.c.Hotkey)
 		xevent.Quit(i.xu)
 		return true
 	}
