@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/kward/go-vnc"
 	"github.com/kward/go-vnc/buttons"
@@ -12,54 +13,78 @@ import (
 )
 
 type VncRemote struct {
-	l   *logrus.Entry
-	vcc *vnc.ClientConn
+	l  *logrus.Entry
+	c  Config
+	vc *vnc.ClientConn
+	nc net.Conn
+	ci configItem
 }
 
-func NewVncRemote(logger *logrus.Logger, config *Config, pw string) (*VncRemote, error) {
-	l := logrus.NewEntry(logger)
-	// Establish TCP connection to VNC server.
-	// var err error
-	nc, err := net.Dial("tcp", fmt.Sprintf("%v:%v", config.Server, config.Port))
-	if err != nil {
-		return nil, fmt.Errorf("error connecting to VNC host: %v", err)
-	}
-	l.Info("connected")
+func NewVncRemote(logger *logrus.Logger, config Config) *VncRemote {
+	return &VncRemote{l: logrus.NewEntry(logger), c: config}
+}
 
-	//todo figure this out
-	cc := vnc.NewClientConfig(pw)
-	cc.ServerMessageCh = make(chan vnc.ServerMessage)
+func (r *VncRemote) Connect(cname string, timeout time.Duration) error {
+	ci, err := r.c.getItem(cname)
+	if err != nil {
+		return err
+	}
+	r.l.Infof("connecting to vnc remote %q", cname)
+	r.nc, err = net.DialTimeout("tcp", fmt.Sprintf("%v:%v", ci.Server, ci.Port), timeout*time.Second)
+	if err != nil {
+		return err
+	}
+
+	cc := vnc.NewClientConfig(ci.Pw)
+	// cc.ServerMessageCh = make(chan vnc.ServerMessage)
 
 	// Negotiate connection with the server.
-	vcc, err := vnc.Connect(context.Background(), nc, cc)
+	r.l.Infof("negotiating with vnc remote %q", cname)
+	r.vc, err = vnc.Connect(context.Background(), r.nc, cc)
 	if err != nil {
-		return nil, fmt.Errorf("error negotiating connection to VNC host: %v", err)
+		return err
 	}
-	l.Info("authenticated")
-
+	r.l.Infof("connected to vnc remote %q", cname)
 	// configure settle (UI) time to reduce lag
-	vnc.SetSettle(config.SettleMs)
+	vnc.SetSettle(ci.SettleMs())
+	r.ci = ci
+	return nil
+}
 
-	// vcc.FramebufferUpdateRequest(rfbflags.RFBTrue, 10, 20, 30, 40)
-	// vcc.ListenAndHandle()
-
-	return &VncRemote{l, vcc}, nil
+func (r *VncRemote) IsConnected() bool {
+	if r.nc == nil || r.vc == nil {
+		return false
+	}
+	// if _, err := r.nc.Read(make([]byte, 1)); err == io.EOF {
+	// 	return false
+	// }
+	return true
 }
 
 func (r *VncRemote) Disconnect() error {
-	return r.vcc.Close()
+	if !r.IsConnected() {
+		return nil
+	}
+	err := r.nc.Close()
+	if err != nil {
+		return err
+	}
+	r.l.Infof("disconnected from %q", r.ci.Name)
+	return nil
 }
 
-func (r VncRemote) ScreenW() uint16 {
-	return r.vcc.FramebufferWidth()
+func (r *VncRemote) Screen() Screen {
+	if !r.IsConnected() {
+		return Screen{}
+	}
+	return Screen{r.vc.FramebufferWidth(), r.vc.FramebufferHeight()}
 }
 
-func (r VncRemote) ScreenH() uint16 {
-	return r.vcc.FramebufferHeight()
-}
-
-func (r VncRemote) SendKeyEvent(name string, key uint32, isPress bool) error {
-	if err := r.vcc.KeyEvent(keys.Key(key), isPress); err != nil {
+func (r *VncRemote) SendKeyEvent(name string, key uint32, isPress bool) error {
+	if !r.IsConnected() {
+		return fmt.Errorf("remote not connected")
+	}
+	if err := r.vc.KeyEvent(keys.Key(key), isPress); err != nil {
 		r.l.WithError(err).Error("failed to send key event")
 		return err
 	}
@@ -67,13 +92,16 @@ func (r VncRemote) SendKeyEvent(name string, key uint32, isPress bool) error {
 	return nil
 }
 
-func (r VncRemote) SendPointerEvent(name string, button uint8, x, y uint16, isPress bool) error {
+func (r *VncRemote) SendPointerEvent(name string, button uint8, x, y uint16, isPress bool) error {
+	if !r.IsConnected() {
+		return fmt.Errorf("remote not connected")
+	}
 	if !isPress {
 		// The `button` is a bitwise mask of various Button values. When a button
 		// is set, it is pressed, when it is unset, it is released.
 		button = 0
 	}
-	if err := r.vcc.PointerEvent(buttonAdapter(button), x, y); err != nil {
+	if err := r.vc.PointerEvent(buttonAdapter(button), x, y); err != nil {
 		r.l.WithError(err).Error("failed to send pointer event")
 		return err
 	}

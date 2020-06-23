@@ -32,27 +32,56 @@ const (
 
 type Input interface {
 	Grab() error
+	Ungrab() error
+	Screen() Screen
 }
 
 type Remote interface {
+	IsConnected() bool
+	Connect(cname string, timeout time.Duration) error
 	Disconnect() error
-	ScreenW() uint16
-	ScreenH() uint16
+	Screen() Screen
 	SendKeyEvent(name string, key uint32, isPress bool) error
 	SendPointerEvent(name string, button uint8, x, y uint16, isPress bool) error
 }
 
-type Config struct {
+type Config map[string]configItem
+
+func (c Config) getItem(name string) (configItem, error) {
+	item, ok := c[name]
+	if !ok {
+		return configItem{}, fmt.Errorf("couldnt find config defined with name %v", name)
+	}
+	return item, nil
+}
+
+type configItem struct {
+	Name        string
 	Server      string
 	Port        int
-	Keychain    string
+	Pw          string
 	Hotkey      string
 	Keymap      map[string]string
 	ScrollSpeed uint8         `yaml:"scrollSpeed"`
-	SettleMs    time.Duration `yaml:"settleMs"`
+	settle      time.Duration `yaml:"settleMs"`
+	timeout     time.Duration `yaml:"timeoutSec"`
 }
 
-func (c *Config) validate() error {
+func (c *configItem) SetPw(value string) {
+	if value != "" {
+		c.Pw = value
+	}
+}
+
+func (c configItem) SettleMs() time.Duration {
+	return c.settle * time.Millisecond
+}
+
+func (c configItem) TimeoutSec() time.Duration {
+	return c.timeout * time.Second
+}
+
+func (c configItem) validate() error {
 	_, err := getConfigDefs(c.Hotkey)
 	if err != nil {
 		return err
@@ -76,8 +105,8 @@ func (c *Config) validate() error {
 	return nil
 }
 
-func getConfigDefs(value string) ([]EventDefintion, error) {
-	var defs []EventDefintion
+func getConfigDefs(value string) ([]EventDef, error) {
+	var defs []EventDef
 	names := strings.Split(value, "+")
 	for _, name := range names {
 		def, err := newEventDefByName(name)
@@ -89,34 +118,29 @@ func getConfigDefs(value string) ([]EventDefintion, error) {
 	return defs, nil
 }
 
-func NewConfig(path, name string) (*Config, error) {
+func LoadConfig(path string) (Config, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	var wrapper struct {
-		Config map[string]Config
-	}
-	if err := yaml.NewDecoder(file).Decode(&wrapper); err != nil {
+	var config Config
+	if err := yaml.NewDecoder(file).Decode(&config); err != nil {
 		return nil, fmt.Errorf("unable to decode config: %s", err)
 	}
-
-	config, ok := wrapper.Config[name]
-	if !ok {
-		return nil, fmt.Errorf("config named '%v' not found", name)
+	for name, c := range config {
+		c.Name = name
+		config[name] = c
 	}
-	config.SettleMs = config.SettleMs * time.Millisecond
-
-	return &config, nil
+	return config, nil
 }
 
 var modNames = []string{
 	"Control_L", "Control_R", "Alt_L", "Alt_R", "Super_L",
 	"Super_R", "Shift_L", "Shift_R", "Meta_L", "Meta_R"}
 
-func isMod(ed EventDefintion) bool {
+func isMod(ed EventDef) bool {
 	for _, mn := range modNames {
 		if mn == ed.Name {
 			return true
@@ -125,120 +149,120 @@ func isMod(ed EventDefintion) bool {
 	return false
 }
 
-func isCaps(ed EventDefintion) bool {
-	return ed.Key == x11.Keysyms["Caps_Lock"]
-}
-
 type Screen struct {
 	X uint16
 	Y uint16
 }
 
-type EventDefintion struct {
+type EventDef struct {
 	Name   string
 	Key    uint32
 	Button uint8
 	IsKey  bool
 }
 
-type Event struct {
-	combo       []EventDefintion
-	Coords      Screen
-	PrevCoords  Screen
-	localMax    Screen
-	remoteMax   Screen
-	IsPress     bool
-	IsLocked    bool
-	Mods        []EventDefintion
+type event struct {
+	defs        []EventDef
+	mods        map[string]EventDef
+	remote      Screen
+	local       Screen
+	isPress     bool
 	defMapping  map[string]string
 	scrollSpeed uint8
 }
 
-func NewEvent(c *Config, localW, localH, remoteW, remoteH uint16) *Event {
-	return &Event{
-		localMax:    Screen{localW, localH},
-		remoteMax:   Screen{remoteW, remoteH},
-		defMapping:  c.Keymap,
-		scrollSpeed: c.ScrollSpeed,
+func newEvent(defMapping map[string]string, scrollSpeed uint8) *event {
+	return &event{
+		mods:        make(map[string]EventDef),
+		remote:      Screen{},
+		local:       Screen{},
+		scrollSpeed: scrollSpeed,
 	}
 }
 
-func (e *Event) HandleEvent(def EventDefintion, isPress bool) {
-	// resolve single key/button mappings
-	// called right after event creation
-	// to ensure all mappings are correct
-	def = resolveDef(def, e.defMapping)
-	e.combo = []EventDefintion{def} // clear and assign new event
-	e.IsPress = isPress
-	e.handleMods(def, isPress)
-	e.handleCapsLock(def, isPress)
-	e.handleScrollButton(def, isPress)
+func (e *event) handle(def EventDef, isPress bool, c configItem) {
+	e.isPress = isPress
+	e.defs = []EventDef{}
+	e.handleMod(def, isPress)
+	e.defs = resolveDef(def, c)
+	// e.defs = []EventDef{}
+	// defs := resolveDef(def, e.defMapping)
+	// for _, d := range defs {
+	// 	if e.handleMod(def, isPress) {
+	// 		return
+	// 	}
+	// 	if e.handleScrollButton(d, isPress, e.scrollSpeed) {
+	// 		return
+	// 	}
+	// }
+	// e.defs = defs
 }
 
-func (e Event) getCombo() []EventDefintion {
-	// resolve combo key/button mappings
-	// called right before event sending
-	// to ensure avoid confusion around combo conversion
-	return resolveDefCombo(e.combo, e.Mods, e.defMapping, e.IsPress)
+func (e event) resolve(c configItem) []EventDef {
+	return resolveCombo(e.defs, mapToSlice(e.mods), c.Keymap, e.isPress)
 }
 
-func (e *Event) handleMods(def EventDefintion, isPress bool) {
-	for i := 0; i < len(e.Mods); i++ {
-		if def.Name == e.Mods[i].Name && !isPress {
-			e.Mods = append(e.Mods[:i], e.Mods[i+1:]...)
-			return
+func resolveCombo(defs []EventDef, mods []EventDef, defMapping map[string]string, isPress bool) []EventDef {
+	unique := edSliceUnique(append(defs, mods...))
+	for from, to := range defMapping {
+		fromDefs, _ := getConfigDefs(from)
+		toDefs, _ := getConfigDefs(to)
+		intersect := edIntersection(unique, fromDefs)
+		if len(fromDefs) > 1 && len(intersect) == len(unique) {
+			return edSliceSortByPress(toDefs, isPress)
+		}
+
+	}
+	return defs
+}
+
+func resolveDef(def EventDef, ci configItem) []EventDef {
+	if def.Button == x11.Buttons["Button_Up"] || def.Button == x11.Buttons["Button_Down"] {
+		return resolveScrollButton(def, ci.ScrollSpeed)
+	}
+	for from, to := range ci.Keymap {
+		fromDefs, _ := getConfigDefs(from)
+		if len(fromDefs) == 1 && fromDefs[0] == def {
+			toDefs, _ := getConfigDefs(to)
+			return toDefs
 		}
 	}
-	if isPress && isMod(def) {
-		e.Mods = append(e.Mods, def)
+	return []EventDef{def}
+}
+
+func (e *event) handleMod(def EventDef, isPress bool) bool {
+	if isMod(def) {
+		if isPress {
+			e.mods[def.Name] = def
+		} else {
+			delete(e.mods, def.Name)
+		}
+		return true
 	}
+	return false
 }
 
-func (e *Event) handleCapsLock(def EventDefintion, isPress bool) {
-	if isCaps(def) {
-		if isPress && !e.IsLocked {
-			// if press and unlocked, lock
-			e.IsLocked = true
-			return
-		}
-		if isPress && e.IsLocked {
-			// if press and locked, unlock,
-			// but dont send the press
-			e.IsLocked = false
-			e.combo = nil
-			return
-		}
-		if !isPress && e.IsLocked {
-			// if release and locked,
-			// but dont send release
-			e.combo = nil
-			return
-		}
+func resolveScrollButton(def EventDef, scrollSpeed uint8) []EventDef {
+	defs := []EventDef{def}
+	for i := 1; i < int(scrollSpeed); i++ {
+		defs = append(defs, def)
 	}
+	return defs
 }
 
-func (e *Event) handleScrollButton(def EventDefintion, isPress bool) {
-	if isPress && (def.Button == x11.Buttons["Button_Up"] || def.Button == x11.Buttons["Button_Down"]) {
-		for i := 1; i < int(e.scrollSpeed); i++ {
-			// not using <= since the first one gets assigned in HandleEvent
-			e.combo = append(e.combo, def)
-		}
+func (e event) getButtonForMotion() uint8 {
+	button := x11.Buttons["Motion"]
+	if len(e.defs) == 1 && !e.defs[0].IsKey {
+		return e.defs[0].Button
 	}
+	return button
 }
 
-func (e *Event) SetToScreenMid(screenMaxW, screenMaxH uint16) {
-	e.Coords.X = screenMaxW / 2
-	e.Coords.Y = screenMaxH / 2
-}
-
-func (e *Event) SetCoords(x, y uint16) {
-	e.Coords.X = screenOffset(e.Coords.X, x, e.localMax.X, e.remoteMax.X)
-	e.Coords.Y = screenOffset(e.Coords.Y, y, e.localMax.Y, e.remoteMax.Y)
-}
-
-func (e *Event) SetPrevCoords(x, y uint16) {
-	e.PrevCoords.X = x
-	e.PrevCoords.Y = y
+func (e *event) setCoords(x, y uint16, local, remote Screen) {
+	e.local.X = x
+	e.local.Y = y
+	e.remote.X = screenOffset(e.remote.X, x, local.X, remote.X)
+	e.remote.Y = screenOffset(e.remote.Y, y, local.Y, remote.Y)
 }
 
 func screenOffset(value, offset, localMax, remoteMax uint16) uint16 {
@@ -255,38 +279,7 @@ func screenOffset(value, offset, localMax, remoteMax uint16) uint16 {
 	return value
 }
 
-func resolveDef(def EventDefintion, defMapping map[string]string) EventDefintion {
-	for from, to := range defMapping {
-		fromDefs, _ := getConfigDefs(from)
-		if len(fromDefs) == 1 && fromDefs[0] == def {
-			toDefs, _ := getConfigDefs(to)
-			if len(toDefs) == 1 {
-				return toDefs[0]
-			}
-		}
-	}
-	return def
-}
-
-func resolveDefCombo(combo []EventDefintion, mods []EventDefintion,
-	defMapping map[string]string, isPress bool) []EventDefintion {
-	unique := edSliceUnique(append(combo, mods...))
-	for from, to := range defMapping {
-		fromDefs, _ := getConfigDefs(from)
-		intersect := edIntersection(unique, fromDefs)
-		if len(intersect) == len(unique) && len(intersect) == len(fromDefs) {
-			toDefs, _ := getConfigDefs(to)
-			if len(fromDefs) == 1 && len(toDefs) == 1 {
-				// covered by resolveDef
-				return combo
-			}
-			return edSliceSortByPress(toDefs, isPress)
-		}
-	}
-	return combo
-}
-
-func edSliceSortByPress(s []EventDefintion, isPress bool) []EventDefintion {
+func edSliceSortByPress(s []EventDef, isPress bool) []EventDef {
 	sortMod := func(i, j int) bool {
 		if isMod(s[i]) && !isMod(s[j]) {
 			return true
@@ -307,8 +300,20 @@ func edSliceSortByPress(s []EventDefintion, isPress bool) []EventDefintion {
 	return s
 }
 
-func edSliceUnique(s []EventDefintion) []EventDefintion {
-	exists := map[EventDefintion]bool{}
+func edIntersection(a []EventDef, b []EventDef) []EventDef {
+	var intersection []EventDef
+	for _, x := range a {
+		for _, y := range b {
+			if reflect.DeepEqual(x, y) {
+				intersection = append(intersection, x)
+			}
+		}
+	}
+	return intersection
+}
+
+func edSliceUnique(s []EventDef) []EventDef {
+	exists := map[EventDef]bool{}
 	for i := 0; i < len(s); i++ {
 		if !exists[s[i]] {
 			exists[s[i]] = true
@@ -319,41 +324,20 @@ func edSliceUnique(s []EventDefintion) []EventDefintion {
 	return s
 }
 
-func edSliceContains(s []EventDefintion, find EventDefintion) bool {
-	for _, item := range s {
-		if reflect.DeepEqual(item, find) {
-			return true
-		}
-	}
-	return false
-}
-
-func edIntersection(a []EventDefintion, b []EventDefintion) []EventDefintion {
-	var intersection []EventDefintion
-	for _, aa := range a {
-		for _, bb := range b {
-			if reflect.DeepEqual(aa, bb) {
-				intersection = append(intersection, aa)
-			}
-		}
-	}
-	return intersection
-}
-
-func newEventDef(key uint32, button uint8, isKey bool) (*EventDefintion, error) {
+func newEventDef(key uint32, button uint8, isKey bool) (*EventDef, error) {
 	name, err := x11.FindDefName(key, button, isKey)
 	if err != nil {
 		return nil, err
 	}
-	return &EventDefintion{name, key, button, isKey}, nil
+	return &EventDef{name, key, button, isKey}, nil
 }
 
-func newEventDefByName(name string) (*EventDefintion, error) {
+func newEventDefByName(name string) (*EventDef, error) {
 	key, button, isKey, err := x11.FindDefValue(name)
 	if err != nil {
 		return nil, err
 	}
-	return &EventDefintion{name, key, button, isKey}, nil
+	return &EventDef{name, key, button, isKey}, nil
 }
 
 func DebugEvent(l *logrus.Entry, source string, isKey bool, name string, x, y uint16, isPress bool) {
@@ -386,4 +370,24 @@ func StringInSlice(s string, slice []string) bool {
 		}
 	}
 	return false
+}
+
+func Try(l *logrus.Entry, times int, f func(i int) error) {
+	i := 1
+	for {
+		err := f(i)
+		if err == nil || i == times {
+			return
+		}
+		l.Warn(err)
+		i++
+	}
+}
+
+func mapToSlice(m map[string]EventDef) []EventDef {
+	var slice []EventDef
+	for _, i := range m {
+		slice = append(slice, i)
+	}
+	return slice
 }

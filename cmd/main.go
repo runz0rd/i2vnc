@@ -10,10 +10,8 @@ import (
 func main() {
 	//todo tests!
 	var (
-		pw    = flag.String("p", "", "vnc server password string")
 		debug = flag.Bool("d", false, "debug mode bool")
 		cfile = flag.String("cfile", "~/.config/i2vnc.yaml", "path to the config file string")
-		cname = flag.String("cname", "default", "name of the config to use string")
 	)
 	flag.Parse()
 	logger := logrus.New()
@@ -21,15 +19,13 @@ func main() {
 		logger.SetLevel(logrus.DebugLevel)
 	}
 
-	config, err := i2vnc.NewConfig(*cfile, *cname)
+	config, err := i2vnc.LoadConfig(*cfile)
 	if err != nil {
 		logger.WithField(logrus.FieldKeyFile, *cfile).WithError(err).Fatalf("failed loading configuration")
 	}
-	remote, err := i2vnc.NewVncRemote(logger, config, *pw)
-	if err != nil {
-		logger.WithError(err).Fatalf("failed connecting to remote")
-	}
-	defer remote.Disconnect()
+
+	remote := i2vnc.NewVncRemote(logger, config)
+
 	input, err := i2vnc.NewX11Input(logger, remote, config)
 	if err != nil {
 		logger.WithError(err).Fatalf("failed initializing input")
@@ -37,4 +33,9 @@ func main() {
 	if err := input.Grab(); err != nil {
 		logger.WithError(err).Fatalf("failed grabbing input")
 	}
+	//todo daemon for app?
+	//todo configuration validation
+	//todo makefile install and update to rpi instead
+	//todo interactive config generate?
+	//todo minimal ui?
 }
