@@ -3,6 +3,7 @@ package i2vnc
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -120,11 +121,19 @@ func getConfigDefs(value string) ([]EventDef, error) {
 }
 
 func LoadConfig(path string) (Config, error) {
-	absPath, err := filepath.Abs(path)
+	if strings.HasPrefix(path, "~") {
+		usr, err := user.Current()
+		if err != nil {
+			return nil, err
+		}
+		dir := usr.HomeDir
+		path = filepath.Join(dir, path[1:])
+	}
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.Open(absPath)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
