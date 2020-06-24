@@ -1,0 +1,10 @@
+[Unit]
+Description=i2vnc Service
+After=multi-user.target
+
+[Service]
+Type=idle
+ExecStart=xinit /usr/local/bin/i2vnc -cfile=~/i2vnc/config.yaml --forever
+
+[Install]
+WantedBy=multi-user.target
