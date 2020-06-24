@@ -14,15 +14,16 @@ import (
 )
 
 type X11Input struct {
-	l  *logrus.Entry
-	xu *xgbutil.XUtil
-	r  Remote
-	c  Config
-	ci configItem
-	e  *event
+	l       *logrus.Entry
+	xu      *xgbutil.XUtil
+	r       Remote
+	c       Config
+	ci      configItem
+	e       *event
+	forever bool
 }
 
-func NewX11Input(logger *logrus.Logger, r Remote, c Config) (*X11Input, error) {
+func NewX11Input(logger *logrus.Logger, r Remote, c Config, forever bool) (*X11Input, error) {
 	l := logrus.NewEntry(logger)
 	// create X connection
 	l.Infof("connecting to X server")
@@ -31,7 +32,8 @@ func NewX11Input(logger *logrus.Logger, r Remote, c Config) (*X11Input, error) {
 		return nil, err
 	}
 	ci := configItem{}
-	return &X11Input{l: l, xu: xu, r: r, c: c, e: newEvent(ci.Keymap, ci.ScrollSpeed), ci: ci}, nil
+	e := newEvent(ci.Keymap, ci.ScrollSpeed)
+	return &X11Input{l, xu, r, c, ci, e, forever}, nil
 }
 
 func (i *X11Input) Grab() error {
@@ -160,7 +162,7 @@ func (i *X11Input) handleKeyEvent(state uint16, keycode xproto.Keycode, isPress 
 }
 
 func (i *X11Input) handlePointerEvent(state uint16, button uint8, x, y int16, isPress bool) {
-	DebugX11Event(i.l, "X11Input", state, 0, button, x, y, isPress)
+	// DebugX11Event(i.l, "X11Input", state, 0, button, x, y, isPress)
 	bdef, err := newEventDef(0, button, false)
 	if err != nil {
 		i.l.WithError(err).Error("handlePointerEvent failed")
@@ -199,7 +201,7 @@ func (i *X11Input) hotkeyPressed(cname, hotkey string) bool {
 func (i *X11Input) handleHotkeys() bool {
 	for cname, ci := range i.c {
 		if i.hotkeyPressed(cname, ci.Hotkey) && !i.e.isPress {
-			if i.r.IsConnected() && cname == i.ci.Name {
+			if !i.forever && i.r.IsConnected() && cname == i.ci.Name {
 				i.l.Infof("caught %q, disconnecting fom %q", ci.Hotkey, cname)
 				xevent.Quit(i.xu)
 				i.r.Disconnect()
