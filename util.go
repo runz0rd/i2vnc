@@ -185,17 +185,6 @@ func (e *event) handle(def EventDef, isPress bool, c configItem) {
 	e.defs = []EventDef{}
 	e.handleMod(def, isPress)
 	e.defs = resolveDef(def, c)
-	// e.defs = []EventDef{}
-	// defs := resolveDef(def, e.defMapping)
-	// for _, d := range defs {
-	// 	if e.handleMod(def, isPress) {
-	// 		return
-	// 	}
-	// 	if e.handleScrollButton(d, isPress, e.scrollSpeed) {
-	// 		return
-	// 	}
-	// }
-	// e.defs = defs
 }
 
 func (e event) resolve(c configItem) []EventDef {
