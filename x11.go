@@ -178,11 +178,11 @@ func (i *X11Input) sendEvent() {
 	for _, def := range i.e.resolve(i.ci) {
 		if def.IsKey {
 			if err := i.r.SendKeyEvent(def.Name, def.Key, i.e.isPress); err != nil {
-				i.l.Warn(err)
+				i.l.Trace(err)
 			}
 		} else {
 			if err := i.r.SendPointerEvent(def.Name, def.Button, i.e.remote.X, i.e.remote.Y, i.e.isPress); err != nil {
-				i.l.Warn(err)
+				i.l.Trace(err)
 			}
 		}
 	}
