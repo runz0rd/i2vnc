@@ -200,7 +200,10 @@ func (i *X11Input) hotkeyPressed(cname, hotkey string) bool {
 
 func (i *X11Input) handleHotkeys() bool {
 	for cname, ci := range i.c {
-		if i.hotkeyPressed(cname, ci.Hotkey) && !i.e.isPress {
+		if i.hotkeyPressed(cname, ci.Hotkey) {
+			if i.e.isPress {
+				return true
+			}
 			if !i.forever && i.r.IsConnected() && cname == i.ci.Name {
 				i.l.Infof("caught %q, disconnecting fom %q", ci.Hotkey, cname)
 				xevent.Quit(i.xu)
