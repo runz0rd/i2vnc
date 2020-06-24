@@ -4,7 +4,7 @@ After=multi-user.target
 
 [Service]
 Type=idle
-ExecStart=xinit /usr/local/bin/i2vnc -cfile=~/i2vnc/config.yaml --forever
+ExecStart=xinit ~/i2vnc/i2vnc -cfile=~/i2vnc/deploy/config.yaml --forever
 
 [Install]
 WantedBy=multi-user.target
