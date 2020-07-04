@@ -152,7 +152,7 @@ func LoadConfig(path string) (Config, error) {
 
 var modNames = []string{
 	"Control_L", "Control_R", "Alt_L", "Alt_R", "Super_L",
-	"Super_R", "Shift_L", "Shift_R", "Meta_L", "Meta_R"}
+	"Super_R", "Shift_L", "Shift_R", "Meta_L", "Meta_R", "Caps_Lock"}
 
 func isMod(ed EventDef) bool {
 	for _, mn := range modNames {
@@ -198,7 +198,7 @@ func (e *event) handle(def EventDef, isPress bool, c configItem) {
 	e.isPress = isPress
 	e.defs = []EventDef{}
 	e.handleMod(def, isPress)
-	e.defs = resolveDef(def, c)
+	e.defs = resolveDef(def, c, isPress)
 }
 
 func (e event) resolve(c configItem) []EventDef {
@@ -209,17 +209,16 @@ func resolveCombo(defs []EventDef, mods []EventDef, defMapping map[string]string
 	unique := edSliceUnique(append(defs, mods...))
 	for from, to := range defMapping {
 		fromDefs, _ := getConfigDefs(from)
-		toDefs, _ := getConfigDefs(to)
 		intersect := edIntersection(unique, fromDefs)
 		if len(fromDefs) > 1 && len(intersect) == len(unique) {
+			toDefs, _ := getConfigDefs(to)
 			return edSliceSortByPress(toDefs, isPress)
 		}
-
 	}
 	return defs
 }
 
-func resolveDef(def EventDef, ci configItem) []EventDef {
+func resolveDef(def EventDef, ci configItem, isPress bool) []EventDef {
 	if def.Button == x11.Buttons["Button_Up"] || def.Button == x11.Buttons["Button_Down"] {
 		return resolveScrollButton(def, ci.ScrollSpeed)
 	}
@@ -227,7 +226,7 @@ func resolveDef(def EventDef, ci configItem) []EventDef {
 		fromDefs, _ := getConfigDefs(from)
 		if len(fromDefs) == 1 && fromDefs[0] == def {
 			toDefs, _ := getConfigDefs(to)
-			return toDefs
+			return edSliceSortByPress(toDefs, isPress)
 		}
 	}
 	return []EventDef{def}

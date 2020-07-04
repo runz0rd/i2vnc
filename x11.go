@@ -140,15 +140,41 @@ func (i *X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEv
 	i.handlePointerEvent(e.State, button, e.EventX, e.EventY, i.e.isPress)
 }
 
+func (i *X11Input) keysymByState(state uint16, keycode xproto.Keycode) xproto.Keysym {
+	k1 := keybind.KeysymGet(i.xu, keycode, 0)
+	k2 := keybind.KeysymGet(i.xu, keycode, 1)
+	k3 := keybind.KeysymGet(i.xu, keycode, 2)
+	// k4 := keybind.KeysymGet(i.xu, keycode, 3)
+	mods := keybind.ModifierString(state)
+	keysym := k1
+
+	// keyName, _ := x11.FindDefName(uint32(keysym), 0, true)
+	if strings.Contains(mods, "shift") && strings.Contains(mods, "lock") {
+		// shifted and locked
+		keysym = k1
+	} else if strings.Contains(mods, "shift") || strings.Contains(mods, "lock") {
+		// just shifted or locked
+		keysym = k2
+		if keysym == 0 {
+			// if it cant be shifted, use orginal
+			keysym = k1
+		}
+	} else if strings.Contains(mods, "mod1") {
+		// alted
+		keysym = k3
+	}
+	if strings.Contains(mods, "control") || strings.Contains(mods, "mod4") {
+		// control or super should cancel the effects of shift/lock
+		// since this can be buggy on some servers
+		// eg: caps_lock doesnt get sent
+		keysym = k1
+	}
+	return keysym
+}
+
 func (i *X11Input) handleKeyEvent(state uint16, keycode xproto.Keycode, isPress bool) {
 	// DebugX11Event(i.l, "X11Input", state, keycode, 0, 0, 0, isPress)
-	keysym := keybind.KeysymGet(i.xu, keycode, 0)
-	shifted := keybind.KeysymGet(i.xu, keycode, 1)
-	if strings.Contains(keybind.ModifierString(state), "shift") && shifted != 0 {
-		// only for shiftable characters, since mods shifted keycode is 0
-		keysym = shifted
-	}
-
+	keysym := i.keysymByState(state, keycode)
 	kdef, err := newEventDef(uint32(keysym), 0, true)
 	if err != nil {
 		i.l.WithError(err).Error("handleKeyEvent failed")
