@@ -136,8 +136,7 @@ func (i *X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEv
 	}
 	// the current button and isPress must be sent along with
 	// motion events in order for drag to work
-	button := i.e.getButtonForMotion()
-	i.handlePointerEvent(e.State, button, e.EventX, e.EventY, i.e.isPress)
+	i.handlePointerEvent(e.State, i.e.getButtonForMotion(), e.EventX, e.EventY, i.e.getLastEventIsPress())
 }
 
 func (i *X11Input) keysymByState(state uint16, keycode xproto.Keycode) xproto.Keysym {
@@ -155,8 +154,8 @@ func (i *X11Input) keysymByState(state uint16, keycode xproto.Keycode) xproto.Ke
 	} else if strings.Contains(mods, "shift") || strings.Contains(mods, "lock") {
 		// just shifted or locked
 		keysym = k2
-		if keysym == 0 {
-			// if it cant be shifted, use orginal
+		if keysym == 0 || uint32(k1) == x11.Keysyms["Tab"] {
+			// if it cant be shifted or is Tab, use orginal
 			keysym = k1
 		}
 	} else if strings.Contains(mods, "mod1") {
@@ -175,12 +174,12 @@ func (i *X11Input) keysymByState(state uint16, keycode xproto.Keycode) xproto.Ke
 func (i *X11Input) handleKeyEvent(state uint16, keycode xproto.Keycode, isPress bool) {
 	// DebugX11Event(i.l, "X11Input", state, keycode, 0, 0, 0, isPress)
 	keysym := i.keysymByState(state, keycode)
-	kdef, err := newEventDef(uint32(keysym), 0, true)
+	kdef, err := newEventDef(uint32(keysym), 0, true, isPress)
 	if err != nil {
 		i.l.WithError(err).Error("handleKeyEvent failed")
 		return
 	}
-	i.e.handle(*kdef, isPress, i.ci)
+	i.e.handle(*kdef)
 	if i.handleHotkeys() {
 		return
 	}
@@ -189,25 +188,25 @@ func (i *X11Input) handleKeyEvent(state uint16, keycode xproto.Keycode, isPress 
 
 func (i *X11Input) handlePointerEvent(state uint16, button uint8, x, y int16, isPress bool) {
 	// DebugX11Event(i.l, "X11Input", state, 0, button, x, y, isPress)
-	bdef, err := newEventDef(0, button, false)
+	bdef, err := newEventDef(0, button, false, isPress)
 	if err != nil {
 		i.l.WithError(err).Error("handlePointerEvent failed")
 		return
 	}
-	i.e.handle(*bdef, isPress, i.ci)
+	i.e.handle(*bdef)
 
 	i.e.setCoords(uint16(x), uint16(y), i.Screen(), i.r.Screen())
 	i.sendEvent()
 }
 
 func (i *X11Input) sendEvent() {
-	for _, def := range i.e.resolve(i.ci) {
+	for _, def := range i.e.resolve(i.ci.getConfigMaps(), i.ci.ScrollSpeed) {
 		if def.IsKey {
-			if err := i.r.SendKeyEvent(def.Name, def.Key, i.e.isPress); err != nil {
+			if err := i.r.SendKeyEvent(def.Name, def.Key, def.IsPress); err != nil {
 				i.l.Trace(err)
 			}
 		} else {
-			if err := i.r.SendPointerEvent(def.Name, def.Button, i.e.remote.X, i.e.remote.Y, i.e.isPress); err != nil {
+			if err := i.r.SendPointerEvent(def.Name, def.Button, i.e.remote.X, i.e.remote.Y, def.IsPress); err != nil {
 				i.l.Trace(err)
 			}
 		}
@@ -215,21 +214,18 @@ func (i *X11Input) sendEvent() {
 }
 
 func (i *X11Input) hotkeyPressed(cname, hotkey string) bool {
-	hotkeyDefs, err := getConfigDefs(hotkey)
+	hotkeyDefs, err := getConfigDefs(hotkey, true)
 	if err != nil {
 		i.l.WithError(err).Warnf("failed getting hotkey for %q", cname)
 		return false
 	}
-	intersect := edIntersection(hotkeyDefs, i.e.resolve(i.ci))
+	intersect := edIntersection(hotkeyDefs, i.e.resolve(i.ci.getConfigMaps(), i.ci.ScrollSpeed))
 	return len(intersect) == len(hotkeyDefs)
 }
 
 func (i *X11Input) handleHotkeys() bool {
 	for cname, ci := range i.c {
 		if i.hotkeyPressed(cname, ci.Hotkey) {
-			if i.e.isPress {
-				return true
-			}
 			if !i.forever && i.r.IsConnected() && cname == i.ci.Name {
 				i.l.Infof("caught %q, disconnecting fom %q", ci.Hotkey, cname)
 				xevent.Quit(i.xu)

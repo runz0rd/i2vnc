@@ -8,7 +8,6 @@ import (
 )
 
 func main() {
-	//todo tests!
 	var (
 		debug   = flag.Bool("d", false, "debug mode")
 		cfile   = flag.String("cfile", "~/.config/i2vnc.yaml", "path to the config file")
@@ -34,9 +33,4 @@ func main() {
 	if err := input.Grab(); err != nil {
 		logger.WithError(err).Fatalf("failed grabbing input")
 	}
-	//todo daemon for app?
-	//todo configuration validation
-	//todo makefile install and update to rpi instead
-	//todo interactive config generate?
-	//todo minimal ui?
 }
