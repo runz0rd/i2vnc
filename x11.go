@@ -32,7 +32,7 @@ func NewX11Input(logger *logrus.Logger, r Remote, c Config, forever bool) (*X11I
 		return nil, err
 	}
 	ci := configItem{}
-	e := newEvent(ci.Keymap, ci.ScrollSpeed)
+	e := newEvent(ci.getConfigMaps(), ci.ScrollSpeed)
 	return &X11Input{l, xu, r, c, ci, e, forever}, nil
 }
 
@@ -91,7 +91,7 @@ func (i *X11Input) switchRemote(cname string) error {
 		return err
 	}
 	i.ci = ci
-
+	i.e = newEvent(ci.getConfigMaps(), ci.ScrollSpeed)
 	// set coords to middle of remote screen
 	remoteScreen := i.r.Screen()
 	i.e.setCoords(remoteScreen.X/2, remoteScreen.Y/2, i.Screen(), remoteScreen)
@@ -200,7 +200,7 @@ func (i *X11Input) handlePointerEvent(state uint16, button uint8, x, y int16, is
 }
 
 func (i *X11Input) sendEvent() {
-	for _, def := range i.e.resolve(i.ci.getConfigMaps(), i.ci.ScrollSpeed) {
+	for _, def := range i.e.resolve() {
 		if def.IsKey {
 			if err := i.r.SendKeyEvent(def.Name, def.Key, def.IsPress); err != nil {
 				i.l.Trace(err)
@@ -219,7 +219,7 @@ func (i *X11Input) hotkeyPressed(cname, hotkey string) bool {
 		i.l.WithError(err).Warnf("failed getting hotkey for %q", cname)
 		return false
 	}
-	intersect := edIntersection(hotkeyDefs, i.e.resolve(i.ci.getConfigMaps(), i.ci.ScrollSpeed))
+	intersect := edIntersection(hotkeyDefs, i.e.resolve())
 	return len(intersect) == len(hotkeyDefs)
 }
 

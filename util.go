@@ -195,14 +195,17 @@ type event struct {
 	remote        Screen
 	local         Screen
 	scrollSpeed   uint8
+	configMaps    []configMap
+	resolved      []string
 }
 
-func newEvent(defMapping map[string]string, scrollSpeed uint8) *event {
+func newEvent(cms []configMap, scrollSpeed uint8) *event {
 	return &event{
 		modMap:      map[string]string{},
 		remote:      Screen{},
 		local:       Screen{},
 		scrollSpeed: scrollSpeed,
+		configMaps:  cms,
 	}
 }
 
@@ -211,28 +214,37 @@ func (e *event) handle(def EventDef) {
 	e.def = def
 }
 
-func (e *event) resolve(cms []configMap, scrollSpeed uint8) []EventDef {
+func (e *event) resolve() []EventDef {
 	if e.def.Button == x11.Buttons["Button_Up"] || e.def.Button == x11.Buttons["Button_Down"] {
-		return resolveScrollButton(e.def, scrollSpeed)
+		return resolveScrollButton(e.def, e.scrollSpeed)
 	}
-	resolved, skipOnRelease := resolveCombination(e.combination(), cms, e.def.IsPress)
+
+	resolved := resolve(e.combination(), e.configMaps)
 	if e.def.IsPress {
-		e.skipOnRelease = skipOnRelease
-	} else {
-		if handleSkipOnRelease(e.def.Name, &e.skipOnRelease, cms) {
+		if len(resolved) == 1 && StringInSlice(resolved[0], modNames) {
+			// if were pressing just a mod, dont send anything
 			return nil
 		}
-	}
-	// dont return already pressed mods
-	if len(resolved) > 1 {
-		for i := 0; i < len(resolved); i++ {
-			_, ok := e.modMap[resolved[i].Name]
-			if ok && resolved[i].IsPress == e.def.IsPress {
-				resolved = append(resolved[:i], resolved[i+1:]...)
-			}
+		// if e.resolved != nil && !StringInSlice(e.def.Name, modNames) && stringSliceEquals(e.resolved, resolved) {
+		// 	// if were pressing a key/button and its the same one already saved as resolved, use only keys/buttons
+		// 	return makeEventDefs(stringSliceMap(e.resolved, isNotModName), e.def.IsPress)
+		// }
+		// save the last resolved state on press so it can be used on release
+		if !stringSliceEquals(resolved, e.combination()) {
+			e.resolved = resolved
 		}
 	}
-	return resolved
+	if !e.def.IsPress && len(e.resolved) > 0 {
+		if !isMod(e.def) {
+			// on key/button release use resolved keys/buttons
+			resolved = stringSliceMap(e.resolved, isNotModName)
+		} else if len(e.modMap) == 0 {
+			// on last mod release use resolved mods
+			resolved = stringSliceMap(e.resolved, isModName)
+			e.resolved = nil
+		}
+	}
+	return makeEventDefs(resolved, e.def.IsPress)
 }
 
 func (e event) combination() []string {
@@ -432,6 +444,23 @@ func stringSliceUnique(s []string) []string {
 	return s
 }
 
+func stringSliceDiff(source []string, comparison []string) []string {
+	var diff []string
+	for _, s := range source {
+		found := false
+		for _, c := range comparison {
+			if s == c {
+				found = true
+				break
+			}
+		}
+		if !found {
+			diff = append(diff, s)
+		}
+	}
+	return diff
+}
+
 func makeEventDefs(names []string, isPress bool) []EventDef {
 	var eds []EventDef
 	for _, name := range names {
@@ -451,31 +480,38 @@ func resolveDef(def EventDef, configMaps []configMap) EventDef {
 	return def
 }
 
-func resolveCombination(combination []string, configMaps []configMap,
-	isPress bool) (resolved []EventDef, skipOnRelease []string) {
-	for _, cm := range configMaps {
-		if stringSliceEquals(cm.from, combination) {
-			resolved := makeEventDefs(cm.to, isPress)
-			modIntersection := stringSliceIntersect(cm.from, modNames)
-			if len(modIntersection) > 0 && len(combination) > 1 {
-				var resolvedMods []string
-				for _, mod := range modIntersection {
-					resolvedMod := resolveSingle(mod, configMaps)
-					if resolvedMod == "" {
-						resolvedMod = mod
-					}
-					resolvedMods = append(resolvedMods, resolvedMod)
-				}
-				if isPress {
-					modReleaseEds := makeEventDefs(resolvedMods, false)
-					resolved = append(modReleaseEds, resolved...)
-				}
-				return resolved, resolvedMods
-			}
-			return resolved, nil
+func isModName(name string) bool {
+	return StringInSlice(name, modNames)
+}
+
+func isNotModName(name string) bool {
+	return !StringInSlice(name, modNames)
+}
+
+func stringSliceMap(s []string, f func(string) bool) []string {
+	var mapped []string
+	for _, item := range s {
+		if f(item) {
+			mapped = append(mapped, item)
 		}
 	}
-	return makeEventDefs(combination, isPress), nil
+	return mapped
+}
+
+func resolve(combination []string, configMaps []configMap) []string {
+	for _, cm := range configMaps {
+		if len(cm.from) == 1 && len(cm.to) == 1 {
+			for i := 0; i < len(combination); i++ {
+				if cm.from[0] == combination[i] {
+					combination = append(append(combination[:i], cm.to[0]), combination[i+1:]...)
+				}
+			}
+		}
+		if stringSliceEquals(cm.from, combination) {
+			return cm.to
+		}
+	}
+	return combination
 }
 
 func resolveSingle(name string, configMaps []configMap) string {
