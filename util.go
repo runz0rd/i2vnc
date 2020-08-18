@@ -213,7 +213,8 @@ func (e *event) resolve() []EventDef {
 	if e.current.Button == x11.Buttons["Button_Up"] || e.current.Button == x11.Buttons["Button_Down"] {
 		return resolveScrollButton(e.current, e.scrollSpeed)
 	}
-	return resolveDef(e.current, e.configMaps)
+	resolved := resolveDef(e.current, e.configMaps)
+	return edSliceSortByPress(resolved, e.current.IsPress)
 }
 
 func resolveScrollButton(def EventDef, scrollSpeed uint8) []EventDef {
