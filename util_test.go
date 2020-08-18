@@ -112,7 +112,6 @@ func Test_event_resolve(t *testing.T) {
 		name         string
 		args         args
 		wantCurrent  EventDef
-		wantPressed  map[string]string
 		wantResolved []EventDef
 	}{
 		{
@@ -121,7 +120,6 @@ func Test_event_resolve(t *testing.T) {
 				defs: []EventDef{makeEd("Motion", true)},
 			},
 			wantCurrent:  makeEd("Motion", true),
-			wantPressed:  map[string]string{"Motion": "Motion"},
 			wantResolved: []EventDef{makeEd("Motion", true)},
 		},
 		{
@@ -130,7 +128,6 @@ func Test_event_resolve(t *testing.T) {
 				defs: []EventDef{makeEd("a", true)},
 			},
 			wantCurrent:  makeEd("a", true),
-			wantPressed:  map[string]string{"a": "a"},
 			wantResolved: []EventDef{makeEd("a", true)},
 		},
 		{
@@ -139,8 +136,7 @@ func Test_event_resolve(t *testing.T) {
 				defs: []EventDef{makeEd("Alt_L", true)},
 			},
 			wantCurrent:  makeEd("Alt_L", true),
-			wantPressed:  map[string]string{"Alt_L": "Alt_L"},
-			wantResolved: nil,
+			wantResolved: []EventDef{makeEd("Alt_L", true)},
 		},
 		{
 			name: "mod release",
@@ -148,8 +144,7 @@ func Test_event_resolve(t *testing.T) {
 				defs: []EventDef{makeEd("Alt_L", false)},
 			},
 			wantCurrent:  makeEd("Alt_L", false),
-			wantPressed:  map[string]string{},
-			wantResolved: nil,
+			wantResolved: []EventDef{makeEd("Alt_L", false)},
 		},
 		{
 			name: "mod press release",
@@ -157,8 +152,7 @@ func Test_event_resolve(t *testing.T) {
 				defs: []EventDef{makeEd("Alt_L", true), makeEd("Alt_L", false)},
 			},
 			wantCurrent:  makeEd("Alt_L", false),
-			wantPressed:  map[string]string{},
-			wantResolved: nil,
+			wantResolved: []EventDef{makeEd("Alt_L", false)},
 		},
 		{
 			name: "mod resolve press",
@@ -167,8 +161,7 @@ func Test_event_resolve(t *testing.T) {
 				cms:  []configMap{{[]string{"Alt_L"}, []string{"Super_L"}}},
 			},
 			wantCurrent:  makeEd("Alt_L", true),
-			wantPressed:  map[string]string{"Alt_L": "Alt_L"},
-			wantResolved: nil,
+			wantResolved: []EventDef{makeEd("Super_L", true)},
 		},
 		{
 			name: "mod key 1",
@@ -177,8 +170,7 @@ func Test_event_resolve(t *testing.T) {
 				cms:  []configMap{{[]string{"Control_L"}, []string{"Super_L"}}},
 			},
 			wantCurrent:  makeEd("a", true),
-			wantPressed:  map[string]string{"Alt_L": "Alt_L", "a": "a"},
-			wantResolved: []EventDef{makeEd("Alt_L", true), makeEd("a", true)},
+			wantResolved: []EventDef{makeEd("a", true)},
 		},
 		{
 			name: "mod key 2",
@@ -189,8 +181,7 @@ func Test_event_resolve(t *testing.T) {
 				},
 			},
 			wantCurrent:  makeEd("Alt_L", false),
-			wantPressed:  map[string]string{},
-			wantResolved: nil,
+			wantResolved: []EventDef{makeEd("Alt_L", false)},
 		},
 		{
 			name: "mod key resolve press",
@@ -199,8 +190,7 @@ func Test_event_resolve(t *testing.T) {
 				cms:  []configMap{{[]string{"Alt_L"}, []string{"Super_L"}}},
 			},
 			wantCurrent:  makeEd("a", true),
-			wantPressed:  map[string]string{"Alt_L": "Alt_L", "a": "a"},
-			wantResolved: []EventDef{makeEd("Super_L", true), makeEd("a", true)},
+			wantResolved: []EventDef{makeEd("a", true)},
 		},
 		{
 			name: "mod key resolve release",
@@ -212,8 +202,7 @@ func Test_event_resolve(t *testing.T) {
 				cms: []configMap{{[]string{"Alt_L"}, []string{"Super_L"}}},
 			},
 			wantCurrent:  makeEd("a", false),
-			wantPressed:  map[string]string{},
-			wantResolved: []EventDef{makeEd("a", false), makeEd("Super_L", false)},
+			wantResolved: []EventDef{makeEd("a", false)},
 		},
 		{
 			name: "key press release",
@@ -221,7 +210,6 @@ func Test_event_resolve(t *testing.T) {
 				defs: []EventDef{makeEd("a", true), makeEd("a", false)},
 			},
 			wantCurrent:  makeEd("a", false),
-			wantPressed:  map[string]string{},
 			wantResolved: []EventDef{makeEd("a", false)},
 		},
 		{
@@ -234,8 +222,7 @@ func Test_event_resolve(t *testing.T) {
 				},
 			},
 			wantCurrent:  makeEd("Alt_L", true),
-			wantPressed:  map[string]string{"Alt_L": "Alt_L"},
-			wantResolved: nil,
+			wantResolved: []EventDef{makeEd("Meta_L", true)},
 		},
 		{
 			name: "complex step 2",
@@ -247,8 +234,7 @@ func Test_event_resolve(t *testing.T) {
 				},
 			},
 			wantCurrent:  makeEd("Tab", true),
-			wantPressed:  map[string]string{"Alt_L": "Alt_L", "Tab": "Tab"},
-			wantResolved: []EventDef{makeEd("Super_L", true), makeEd("Tab", true)},
+			wantResolved: []EventDef{makeEd("Tab", true)},
 		},
 		{
 			name: "complex step 3",
@@ -260,7 +246,6 @@ func Test_event_resolve(t *testing.T) {
 				},
 			},
 			wantCurrent:  makeEd("Tab", true),
-			wantPressed:  map[string]string{"Alt_L": "Alt_L", "Tab": "Tab"},
 			wantResolved: []EventDef{makeEd("Tab", true)},
 		},
 		{
@@ -275,8 +260,7 @@ func Test_event_resolve(t *testing.T) {
 				},
 			},
 			wantCurrent:  makeEd("Tab", false),
-			wantPressed:  map[string]string{"Alt_L": "Alt_L"},
-			wantResolved: []EventDef{makeEd("Tab", false), makeEd("Super_L", false)},
+			wantResolved: []EventDef{makeEd("Tab", false)},
 		},
 		{
 			name: "complex step 5",
@@ -290,8 +274,7 @@ func Test_event_resolve(t *testing.T) {
 				},
 			},
 			wantCurrent:  makeEd("Alt_L", false),
-			wantPressed:  map[string]string{},
-			wantResolved: nil,
+			wantResolved: []EventDef{makeEd("Meta_L", false)},
 		},
 		{
 			name: "complex step 6",
@@ -305,7 +288,6 @@ func Test_event_resolve(t *testing.T) {
 				},
 			},
 			wantCurrent:  makeEd("Motion", false),
-			wantPressed:  map[string]string{},
 			wantResolved: []EventDef{makeEd("Motion", false)},
 		},
 	}
@@ -323,9 +305,6 @@ func Test_event_resolve(t *testing.T) {
 			}
 			if !reflect.DeepEqual(e.current, tt.wantCurrent) {
 				t.Errorf("event.handle() gotDef = %v, want %v", e.current, tt.wantCurrent)
-			}
-			if !reflect.DeepEqual(e.pressed, tt.wantPressed) {
-				t.Errorf("event.handle() gotPressed = %v, want %v", e.pressed, tt.wantPressed)
 			}
 			if !reflect.DeepEqual(resolved, tt.wantResolved) {
 				t.Errorf("event.handle() gotResolved = %v, want %v", resolved, tt.wantResolved)

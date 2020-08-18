@@ -190,8 +190,6 @@ type EventDef struct {
 
 type event struct {
 	current     EventDef
-	pressed     map[string]string
-	resolved    []string
 	remote      Screen
 	local       Screen
 	scrollSpeed uint8
@@ -200,7 +198,6 @@ type event struct {
 
 func newEvent(cms []configMap, scrollSpeed uint8) *event {
 	return &event{
-		pressed:     map[string]string{},
 		remote:      Screen{},
 		local:       Screen{},
 		scrollSpeed: scrollSpeed,
@@ -210,40 +207,13 @@ func newEvent(cms []configMap, scrollSpeed uint8) *event {
 
 func (e *event) handle(def EventDef) {
 	e.current = def
-	e.pressed[def.Name] = def.Name
-	if def.IsPress {
-		e.pressed[def.Name] = def.Name
-	} else {
-		delete(e.pressed, def.Name)
-	}
 }
 
 func (e *event) resolve() []EventDef {
 	if e.current.Button == x11.Buttons["Button_Up"] || e.current.Button == x11.Buttons["Button_Down"] {
 		return resolveScrollButton(e.current, e.scrollSpeed)
 	}
-	if e.current.IsPress && !isMod(e.current) {
-		//resolve on first non mod press
-		//mods alone will not be sent
-		if len(e.resolved) > 0 {
-			e.resolved = resolve([]string{e.current.Name}, e.configMaps)
-		} else {
-			e.resolved = resolve(mapToSlice(e.pressed), e.configMaps)
-		}
-	}
-
-	if e.current.Name == "Motion" {
-		return []EventDef{e.current}
-	}
-	if e.current.IsPress && len(e.resolved) > 0 {
-		//return events if pressed and has something resolved
-		return makeEventDefs(e.resolved, e.current.IsPress)
-	}
-	if !e.current.IsPress && !isMod(e.current) {
-		//return events if released and all pressed keys are released
-		return edSliceSortByPress(makeEventDefs(e.resolved, e.current.IsPress), false)
-	}
-	return nil
+	return resolveDef(e.current, e.configMaps)
 }
 
 func resolveScrollButton(def EventDef, scrollSpeed uint8) []EventDef {
@@ -449,14 +419,13 @@ func makeEventDefs(names []string, isPress bool) []EventDef {
 	return eds
 }
 
-func resolveDef(def EventDef, configMaps []configMap) EventDef {
+func resolveDef(def EventDef, configMaps []configMap) []EventDef {
 	for _, cm := range configMaps {
-		if len(cm.from) == 1 && len(cm.to) == 1 && def.Name == cm.from[0] {
-			ed, _ := newEventDefByName(cm.to[0], def.IsPress)
-			return *ed
+		if len(cm.from) == 1 && def.Name == cm.from[0] {
+			return makeEventDefs(cm.to, def.IsPress)
 		}
 	}
-	return def
+	return []EventDef{def}
 }
 
 func isModName(name string) bool {

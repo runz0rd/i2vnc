@@ -3,13 +3,14 @@ config:
     server: 192.168.0.10
     port: 5900
     hotkey: F9
-    scrollSpeed: 4
+  scrollSpeed: 7
     settleMs: 0
+  timeout: 1
     keymap:
       Alt_L: Meta_L
       Super_L: Control_L
       Control_L: Super_L
       Button_8: Super_R+Left
       Button_9: Super_R+Right
-      Home: Super_R+Left
-      End: Super_R+Right
+    Home: Super_R+Up
+    End: Super_R+Down
