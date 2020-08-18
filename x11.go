@@ -62,7 +62,7 @@ func (i *X11Input) Grab() error {
 	// set the local pointer to the middle of local screen
 	i.warpPointer(int16(i.xu.Screen().WidthInPixels/2), int16(i.xu.Screen().HeightInPixels/2))
 	// set the remote pointer to the middle of remote screen
-	i.r.SendPointerEvent("motion", 0, i.e.remote.X, i.e.remote.Y, false)
+	i.r.SendPointerEvent("Motion", 0, i.e.remote.X, i.e.remote.Y, true)
 
 	i.l.Infof("grabbed! press a hotkey to connect")
 	// start X event loop
@@ -136,7 +136,7 @@ func (i *X11Input) handleMotionNotify(xu *xgbutil.XUtil, e xevent.MotionNotifyEv
 	}
 	// the current button and isPress must be sent along with
 	// motion events in order for drag to work
-	i.handlePointerEvent(e.State, i.e.getButtonForMotion(), e.EventX, e.EventY, i.e.getLastEventIsPress())
+	i.handlePointerEvent(e.State, i.e.getButtonForMotion(), e.EventX, e.EventY, i.e.getCurrentIsPress())
 }
 
 func (i *X11Input) keysymByState(state uint16, keycode xproto.Keycode) xproto.Keysym {

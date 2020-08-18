@@ -189,19 +189,18 @@ type EventDef struct {
 }
 
 type event struct {
-	def           EventDef
-	modMap        map[string]string
-	skipOnRelease []string
-	remote        Screen
-	local         Screen
-	scrollSpeed   uint8
-	configMaps    []configMap
-	resolved      []string
+	current     EventDef
+	pressed     map[string]string
+	resolved    []string
+	remote      Screen
+	local       Screen
+	scrollSpeed uint8
+	configMaps  []configMap
 }
 
 func newEvent(cms []configMap, scrollSpeed uint8) *event {
 	return &event{
-		modMap:      map[string]string{},
+		pressed:     map[string]string{},
 		remote:      Screen{},
 		local:       Screen{},
 		scrollSpeed: scrollSpeed,
@@ -210,61 +209,41 @@ func newEvent(cms []configMap, scrollSpeed uint8) *event {
 }
 
 func (e *event) handle(def EventDef) {
-	e.handleMod(def)
-	e.def = def
+	e.current = def
+	e.pressed[def.Name] = def.Name
+	if def.IsPress {
+		e.pressed[def.Name] = def.Name
+	} else {
+		delete(e.pressed, def.Name)
+	}
 }
 
 func (e *event) resolve() []EventDef {
-	if e.def.Button == x11.Buttons["Button_Up"] || e.def.Button == x11.Buttons["Button_Down"] {
-		return resolveScrollButton(e.def, e.scrollSpeed)
+	if e.current.Button == x11.Buttons["Button_Up"] || e.current.Button == x11.Buttons["Button_Down"] {
+		return resolveScrollButton(e.current, e.scrollSpeed)
 	}
-
-	resolved := resolve(e.combination(), e.configMaps)
-	if e.def.IsPress {
-		if len(resolved) == 1 && StringInSlice(resolved[0], modNames) {
-			// if were pressing just a mod, dont send anything
-			return nil
-		}
-		// if e.resolved != nil && !StringInSlice(e.def.Name, modNames) && stringSliceEquals(e.resolved, resolved) {
-		// 	// if were pressing a key/button and its the same one already saved as resolved, use only keys/buttons
-		// 	return makeEventDefs(stringSliceMap(e.resolved, isNotModName), e.def.IsPress)
-		// }
-		// save the last resolved state on press so it can be used on release
-		if !stringSliceEquals(resolved, e.combination()) {
-			e.resolved = resolved
-		}
-	}
-	if !e.def.IsPress && len(e.resolved) > 0 {
-		if !isMod(e.def) {
-			// on key/button release use resolved keys/buttons
-			resolved = stringSliceMap(e.resolved, isNotModName)
-		} else if len(e.modMap) == 0 {
-			// on last mod release use resolved mods
-			resolved = stringSliceMap(e.resolved, isModName)
-			e.resolved = nil
-		}
-	}
-	return makeEventDefs(resolved, e.def.IsPress)
-}
-
-func (e event) combination() []string {
-	var mods []string
-	for _, mod := range e.modMap {
-		mods = append(mods, mod)
-	}
-	return stringSliceUnique(append(mods, e.def.Name))
-}
-
-func (e *event) handleMod(def EventDef) bool {
-	if isMod(def) {
-		if def.IsPress {
-			e.modMap[def.Name] = def.Name
+	if e.current.IsPress && !isMod(e.current) {
+		//resolve on first non mod press
+		//mods alone will not be sent
+		if len(e.resolved) > 0 {
+			e.resolved = resolve([]string{e.current.Name}, e.configMaps)
 		} else {
-			delete(e.modMap, def.Name)
+			e.resolved = resolve(mapToSlice(e.pressed), e.configMaps)
 		}
-		return true
 	}
-	return false
+
+	if e.current.Name == "Motion" {
+		return []EventDef{e.current}
+	}
+	if e.current.IsPress && len(e.resolved) > 0 {
+		//return events if pressed and has something resolved
+		return makeEventDefs(e.resolved, e.current.IsPress)
+	}
+	if !e.current.IsPress && !isMod(e.current) {
+		//return events if released and all pressed keys are released
+		return edSliceSortByPress(makeEventDefs(e.resolved, e.current.IsPress), false)
+	}
+	return nil
 }
 
 func resolveScrollButton(def EventDef, scrollSpeed uint8) []EventDef {
@@ -275,15 +254,15 @@ func resolveScrollButton(def EventDef, scrollSpeed uint8) []EventDef {
 	return defs
 }
 
-func (e event) getLastEventIsPress() bool {
-	return e.def.IsPress
+func (e event) getCurrentIsPress() bool {
+	return e.current.IsPress
 }
 
 func (e event) getButtonForMotion() uint8 {
-	if e.def.IsKey {
+	if e.current.IsKey || !e.current.IsPress {
 		return x11.Buttons["Motion"]
 	}
-	return e.def.Button
+	return e.current.Button
 }
 
 func (e *event) setCoords(x, y uint16, local, remote Screen) {
@@ -496,6 +475,14 @@ func stringSliceMap(s []string, f func(string) bool) []string {
 		}
 	}
 	return mapped
+}
+
+func mapToSlice(m map[string]string) []string {
+	var s []string
+	for _, item := range m {
+		s = append(s, item)
+	}
+	return s
 }
 
 func resolve(combination []string, configMaps []configMap) []string {
