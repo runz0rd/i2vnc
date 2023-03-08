@@ -1,0 +1,25 @@
+# .goreleaser.yml
+# Build customization
+builds:
+  - binary: i2vnc
+    main: ./cmd/main.go
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    goarm:
+      - 7
+    flags:
+      - -trimpath
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+changelog:
+  sort: asc
